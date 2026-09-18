@@ -1,0 +1,8 @@
+build/
+build-*/
+*.o
+*.so
+*.a
+compile_commands.json
+.cache/
+PUBLIC.md
