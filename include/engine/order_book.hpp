@@ -20,6 +20,12 @@ struct Level {
     std::uint32_t order_count = 0;
 };
 
+// Two Level arrays are allocated per instrument, one per side, each as long
+// as the instrument's ladder -- so this size multiplies out across every
+// configured instrument. Keep it a tight 16 bytes (four 4-byte fields, no
+// padding) rather than letting a field widen unnoticed.
+static_assert(sizeof(Level) == 16, "Level must stay 16 bytes: it is allocated per price level, per side");
+
 // Per-instrument order book. Price levels live in flat arrays indexed via
 // PriceLadder (bounded by the instrument's daily price band), with a
 // LevelBitset per side for O(1)-amortized relocation of the best price

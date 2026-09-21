@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bit>
 #include <cstdint>
 #include <vector>
 
@@ -9,6 +10,16 @@ namespace xmatch::detail {
 // search for the nearest set bit. Used to relocate "best bid/ask" in O(1)
 // amortized time when the cached best level empties out, instead of
 // scanning the level array one price at a time.
+//
+// The scans below use std::countl_zero / std::countr_zero (<bit>, C++20)
+// rather than __builtin_clzll / __builtin_ctzll, so nothing here depends on
+// a GCC/Clang extension. Note that the two are not interchangeable at zero:
+// the builtins are undefined on a zero word, while the std functions are
+// defined and return 64. Both loops therefore keep the `if (w)` guard
+// *before* the call -- GCC proves w != 0 from it and emits the same bare
+// bsr/bsf it emitted for the builtins (verified on GCC 13, -O3). Drop the
+// guard and the compiler has to add a zero test, putting a branch back into
+// best-price relocation.
 class LevelBitset {
 public:
     void resize(std::size_t n_bits) {
@@ -27,7 +38,7 @@ public:
         std::uint64_t mask = (bit_idx == 63) ? ~0ULL : ((1ULL << (bit_idx + 1)) - 1);
         std::uint64_t w = words_[static_cast<std::size_t>(word_idx)] & mask;
         for (;;) {
-            if (w) return word_idx * 64 + (63 - __builtin_clzll(w));
+            if (w) return word_idx * 64 + (63 - std::countl_zero(w));
             --word_idx;
             if (word_idx < 0) return -1;
             w = words_[static_cast<std::size_t>(word_idx)];
@@ -44,7 +55,7 @@ public:
         std::uint64_t mask = (bit_idx == 0) ? ~0ULL : (~0ULL << bit_idx);
         std::uint64_t w = words_[static_cast<std::size_t>(word_idx)] & mask;
         for (;;) {
-            if (w) return word_idx * 64 + __builtin_ctzll(w);
+            if (w) return word_idx * 64 + std::countr_zero(w);
             ++word_idx;
             if (word_idx >= n_words) return -1;
             w = words_[static_cast<std::size_t>(word_idx)];

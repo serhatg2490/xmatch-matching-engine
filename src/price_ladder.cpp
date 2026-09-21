@@ -13,15 +13,16 @@ void PriceLadder::build(Price band_lo, Price band_hi) {
     band_lo_ = band_lo;
     band_hi_ = band_hi;
 
-    static constexpr Price kBreakpoints[3] = {200000, 500000, 1000000};
-
+    // Walk the one shared tick schedule (engine/tick_table.hpp) rather than a
+    // private copy of its breakpoints, so adding or moving a bracket there
+    // re-segments the ladder here automatically.
     Price cur = band_lo;
     std::uint32_t offset = 0;
     while (cur <= band_hi) {
         Price step = tick_size(cur);
         Price next_breakpoint = std::numeric_limits<Price>::max();
-        for (Price bp : kBreakpoints) {
-            if (bp > cur) { next_breakpoint = bp; break; }
+        for (const TickBracket& bracket : kTickSchedule) {
+            if (bracket.upper_exclusive > cur) { next_breakpoint = bracket.upper_exclusive; break; }
         }
         Price regime_last = (next_breakpoint == std::numeric_limits<Price>::max())
                                  ? band_hi

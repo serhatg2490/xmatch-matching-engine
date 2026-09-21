@@ -27,6 +27,17 @@ struct OrderRecord {
     bool is_open = false; // true iff currently resting on the book
 };
 
+// DESIGN.md and BENCHMARK.md both quote 48 bytes per order, with the 8-byte
+// fields ordered first so the struct carries no interior padding: a 2^20-slot
+// chunk is then ~48 MB and walking a level's FIFO touches few cache lines per
+// order. That figure is load-bearing for the memory numbers those documents
+// report, so pin it here -- reordering a field or widening one turns a silent
+// regression into a build failure. (Linux x86-64 is the only supported target;
+// see the requirements note in the public API header.)
+static_assert(sizeof(OrderRecord) == 48,
+              "OrderRecord must stay 48 bytes; see the memory layout section of DESIGN.md");
+static_assert(alignof(OrderRecord) == 8, "OrderRecord should need no more than 8-byte alignment");
+
 // Chunked, append-only pool of OrderRecord. Growth allocates a whole new
 // chunk (never moves/copies existing elements), so slot indices and
 // references remain valid for the engine's lifetime and heap allocation
