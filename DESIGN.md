@@ -32,7 +32,11 @@ the order pool.
 be O(1), so each side keeps a cached best index. When the best level empties,
 `LevelBitset::find_highest_le`/`find_lowest_ge` relocate the new best by
 skipping whole 64-bit words via `clz`/`ctz` rather than scanning price by
-price — O(1) amortized, worst case O(depth/64).
+price — O(1) amortized, worst case O(depth/64). The scans go through
+`std::countl_zero`/`std::countr_zero` (`<bit>`, C++20) rather than the
+`__builtin_*` intrinsics, so the file needs no compiler extension; both
+loops test the word for zero before calling, which is what lets GCC emit
+the same bare `bsr`/`tzcnt` despite the std functions being defined at zero.
 
 **FIFO priority: intrusive doubly-linked list inside the order pool.**
 Each `OrderRecord` carries `prev`/`next` pool indices; a `Level` is just a

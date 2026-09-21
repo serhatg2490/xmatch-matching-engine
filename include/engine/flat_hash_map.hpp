@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bit>
 #include <cstdint>
 #include <vector>
 #include <cassert>
@@ -26,8 +27,11 @@ public:
 
     void reserve(std::size_t n) {
         std::size_t needed = static_cast<std::size_t>(static_cast<double>(n) / kMaxLoadFactor) + 1;
-        std::size_t cap = capacity_;
-        while (cap < needed) cap <<= 1;
+        // std::bit_ceil (<bit>, C++20) is the smallest power of two >= needed,
+        // replacing a shift-until-big-enough loop. Powers of two are not
+        // incidental here: probing masks with capacity_ - 1, so a capacity
+        // that is not a power of two would silently corrupt the index.
+        std::size_t cap = std::bit_ceil(needed);
         if (cap > capacity_) rehash(cap);
     }
 
@@ -100,6 +104,10 @@ private:
     }
 
     void rehash(std::size_t new_capacity) {
+        // find()/insert() index with `& mask_`, which is only a valid modulo
+        // when the capacity is a power of two. Every caller happens to pass
+        // one today; assert it rather than trust that it stays true.
+        assert(std::has_single_bit(new_capacity) && "FlatHashMap capacity must be a power of two");
         std::vector<Slot> old = std::move(slots_);
         capacity_ = new_capacity;
         mask_ = capacity_ - 1;
