@@ -102,4 +102,31 @@ TEST(MultiInstrumentTest, TopOfBookOnUnconfiguredInstrumentIsSafelyEmpty) {
     EXPECT_EQ(tob.ask_quantity, 0u);
 }
 
+TEST(MultiInstrumentTest, SecondConfigureIsIgnored) {
+    RecordingListener listener;
+    EngineHandle engine(&listener);
+    InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
+    engine->configure(&cfg, 1);
+    engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10));
+
+    InstrumentConfig other{.instrument_id = 2, .reference_price = Px(60), .band_bps = 1000};
+    engine->configure(&cfg, 1);
+    engine->configure(&other, 1);
+
+    // The resting order survives, stays cancelable, and the book stays consistent.
+    TopOfBook tob = engine->top_of_book(1);
+    EXPECT_EQ(tob.bid_price, Px(25));
+    EXPECT_EQ(tob.bid_quantity, 10u);
+
+    listener.events.clear();
+    engine->cancel(CancelOrder{.order_id = 1});
+    engine->submit(MakeLimit(2, 1, Side::kBuy, TimeInForce::kDay, Px(25), 5));
+    engine->submit(MakeLimit(3, 2, Side::kBuy, TimeInForce::kDay, Px(60), 5));
+    ASSERT_EQ(listener.events.size(), 3u);
+    EXPECT_EQ(listener.events[0], Canceled(1, 10, CancelReason::kUserRequested));
+    EXPECT_EQ(listener.events[1], Accepted(2));
+    EXPECT_EQ(listener.events[2], Rejected(3, RejectReason::kUnknownInstrument));
+    EXPECT_EQ(engine->top_of_book(1).bid_quantity, 5u);
+}
+
 } // namespace

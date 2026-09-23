@@ -47,6 +47,7 @@ private:
     OrderPool pool_;
     std::vector<OrderBook> books_;
     TradeId next_trade_id_ = 1;
+    bool configured_ = false; // configure() is one-shot; see its definition
 };
 
 } // namespace xmatch::detail

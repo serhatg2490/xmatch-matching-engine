@@ -24,10 +24,11 @@ Keep all three in sync when behaviour or structure changes.
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 
-./build/engine_tests    # whole suite
-./build/engine_tests --gtest_filter='CancelReplaceTest.*'   # one suite
-./build/engine_tests --gtest_filter='GoldenScenario.*'    # one test
-ctest --test-dir build    # same tests via gtest_discover_tests
+./build/engine_api_tests    # public-API suite (links the .so)
+./build/engine_internal_tests    # detail:: building blocks (links the core)
+./build/engine_api_tests --gtest_filter='CancelReplaceTest.*'   # one suite
+./build/engine_api_tests --gtest_filter='GoldenScenario.*'    # one test
+ctest --test-dir build    # both binaries via gtest_discover_tests
 
 ./build/engine_bench [num_ops] [num_instruments] [warmup_ops] [seed]   # defaults 10000000 120 500000 42
 taskset -c <idle-core> ./build/engine_bench   # pin for meaningful latency numbers
@@ -41,7 +42,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_BUILD_TESTS=OFF -DENGINE_BUIL
 
 `-DENGINE_NATIVE_ARCH=ON` adds `-march=native`; it is off by default so builds stay portable.
 
-Binaries get a build-tree RUNPATH, so `./build/engine_tests` resolves the `.so` with no
+Binaries get a build-tree RUNPATH, so `./build/engine_api_tests` resolves the `.so` with no
 `LD_LIBRARY_PATH`.
 
 `configure()` pre-reserves 2^24 order slots plus the id index, so *any* process that
@@ -116,7 +117,11 @@ prose and the tests together.
 `Replaced` constructors, `Px(major, minor4)`, and the `EngineHandle` RAII wrapper around
 `xmatch_create`/`xmatch_destroy`. Tests drive the engine through the public API only —
 except `test_internal_structures.cpp`, which unit-tests the `detail::` building blocks
-directly.
+directly. The `.so` builds with hidden visibility (only the `XMATCH_EXPORT` C entry points
+are exported), so the tests are split: `engine_api_tests` links only the `.so`, and
+`engine_internal_tests` links `matching_engine_core` — a static library of every source
+except `engine_api.cpp`, which the `.so` is also built from. Keep `engine_api.cpp` out of
+the core so no test binary can carry its own `xmatch_create` and shadow the `.so`'s.
 
 `test_golden_scenario.cpp` asserts one end-to-end run event-for-event against an exact
 expected vector; it is the regression net for event ordering and replace semantics, so

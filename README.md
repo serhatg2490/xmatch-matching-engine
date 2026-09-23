@@ -107,10 +107,12 @@ xmatch_destroy(engine);
 
 ```sh
 cmake --build build -j
-./build/engine_tests
+./build/engine_api_tests       # public API, through libmatching_engine.so
+./build/engine_internal_tests  # internal building blocks
+ctest --test-dir build         # or both at once
 ```
 
-53 tests across 10 suites: an end-to-end golden scenario asserted event for
+54 tests across 10 suites: an end-to-end golden scenario asserted event for
 event (`test_golden_scenario.cpp`), validation ordering and reject reasons,
 matching/priority/TIF semantics, cancel/replace edge cases (priority
 retention, replace-to-zero, tick/band re-validation, duplicate and self

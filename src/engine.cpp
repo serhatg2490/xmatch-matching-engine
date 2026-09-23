@@ -18,6 +18,14 @@ Engine::Engine(IEventListener* listener) : listener_(listener) {}
 
 void Engine::configure(const InstrumentConfig* instruments, std::size_t count) {
     try {
+        // One-shot. A second call would reset books that still hold open
+        // orders and re-insert instrument ids into the index, corrupting
+        // both, so it is ignored. The flag is set before any work so a
+        // first call that fails part-way is not retried on top of its
+        // partial state either.
+        if (configured_) return;
+        configured_ = true;
+
         books_.resize(count);
         instrument_index_.reserve(count);
         for (std::size_t i = 0; i < count; ++i) {

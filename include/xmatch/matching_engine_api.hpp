@@ -204,6 +204,8 @@ public:
 
     // Declares the tradable instruments. Call this once, before anything
     // else; the engine copies what it needs and does not retain the pointer.
+    // Only the first call takes effect: any later call is ignored and leaves
+    // the configured instruments and the book untouched.
     virtual void configure(const InstrumentConfig* instruments,
                            std::size_t count) = 0;
 
@@ -225,16 +227,20 @@ public:
 // ---------------------------------------------------------------------------
 // C entry points exported by the shared library
 // ---------------------------------------------------------------------------
+// The library is built with hidden default visibility, so these are the only
+// symbols it exports.
+#define XMATCH_EXPORT __attribute__((visibility("default")))
+
 extern "C" {
 
 // Returns xmatch::kApiVersion, so a host can check it matches this header.
-std::uint32_t xmatch_api_version();
+XMATCH_EXPORT std::uint32_t xmatch_api_version();
 
 // Builds an engine that reports to `listener`. The listener must be non-null
 // and must stay alive for as long as the engine does. Never throws across
 // this boundary; returns nullptr if the engine could not be created.
-xmatch::IMatchingEngine* xmatch_create(xmatch::IEventListener* listener);
+XMATCH_EXPORT xmatch::IMatchingEngine* xmatch_create(xmatch::IEventListener* listener);
 
-void xmatch_destroy(xmatch::IMatchingEngine* engine);
+XMATCH_EXPORT void xmatch_destroy(xmatch::IMatchingEngine* engine);
 
 } // extern "C"
