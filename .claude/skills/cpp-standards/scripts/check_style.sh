@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# xmatch biçim kontrolü. Kural numaraları cpp-standards/SKILL.md ile,
-# "bp-N" referansları best-practices/references/practices.md ile eşleşir.
+# xmatch style check. Rule numbers match cpp-standards/SKILL.md;
+# "bp-N" references match best-practices/references/practices.md.
 #
-# Kullanım:
-#   check_style.sh              # git'e göre değişen C/C++ dosyaları
-#   check_style.sh <dosya>...   # verilen dosyalar
-# Çıkış: ihlal varsa 1, yoksa 0.
+# Usage:
+#   check_style.sh              # C/C++ files changed according to git
+#   check_style.sh <file>...    # the given files
+# Exit: 1 if there are violations, 0 otherwise.
 
 set -uo pipefail
 
@@ -26,73 +26,73 @@ fi
 violations=0
 report() { echo "$1:$2: [$3] $4"; violations=$((violations + 1)); }
 
-# Yalnızca yorumdan ibaret satırları eler ("// ...", "* ...", "/* ...").
-# Satır sonundaki yorumlar elenmez — kasıtlı: kod tarafı yine taranır.
+# Drops lines that consist only of a comment ("// ...", "* ...", "/* ...").
+# Trailing comments are not dropped — deliberately: the code part is still scanned.
 drop_comments() { grep -vE '^[0-9]+:[[:space:]]*(//|\*|/\*)'; }
 
 for f in "${files[@]:-}"; do
     [ -f "$f" ] || continue
     case "$f" in *.cpp|*.hpp|*.c|*.h) ;; *) continue ;; esac
-    # Yolu depoya göreli hale getir: aşağıdaki src/* ve include/* kalıpları
-    # buna bağlı, hook ise mutlak yol gönderir.
+    # Make the path repo-relative: the src/* and include/* patterns below
+    # depend on it, while the hook passes an absolute path.
     f=$(realpath --relative-to="$repo_root" "$f" 2>/dev/null || echo "$f")
 
-    # Kural 1 — tab yok
+    # Rule 1 — no tabs
     while IFS=: read -r n _; do
-        [ -n "$n" ] && report "$f" "$n" "kural 1" "tab karakteri; 4 boşluk kullan"
+        [ -n "$n" ] && report "$f" "$n" "rule 1" "tab character; use 4 spaces"
     done < <(grep -nP '\t' "$f" 2>/dev/null)
 
-    # Kural 2 — satır uzunluğu (tests/ muaf)
+    # Rule 2 — line length (tests/ exempt)
     case "$f" in tests/*) ;; *)
         while read -r n len; do
-            report "$f" "$n" "kural 2" "satır $len kolon, sınır $MAX_COLS"
+            report "$f" "$n" "rule 2" "line is $len columns, limit $MAX_COLS"
         done < <(awk -v m="$MAX_COLS" 'length>m{print NR, length}' "$f")
     ;; esac
 
-    # Kural 3 — header koruması
+    # Rule 3 — header guard
     case "$f" in *.hpp|*.h)
-        grep -q '^#pragma once' "$f" || report "$f" 1 "kural 3" "#pragma once yok"
+        grep -q '^#pragma once' "$f" || report "$f" 1 "rule 3" "missing #pragma once"
         n=$(grep -nE '^#ifndef +[A-Z_]+_H' "$f" | head -1 | cut -d: -f1)
-        [ -n "$n" ] && report "$f" "$n" "kural 3" "include guard; #pragma once kullan"
+        [ -n "$n" ] && report "$f" "$n" "rule 3" "include guard; use #pragma once"
     ;; esac
 
-    # Kural 5 — namespace / extern "C" kapanış yorumu
+    # Rule 5 — namespace / extern "C" closing comment
     for pair in 'namespace:^namespace .*\{:^\} // namespace' 'extern "C":^extern "C" \{:^\} // extern "C"'; do
         what=${pair%%:*}; rest=${pair#*:}; open=${rest%%:*}; close=${rest#*:}
         o=$(grep -cE "$open" "$f"); c=$(grep -cE "$close" "$f")
-        [ "$o" -ne "$c" ] && report "$f" 1 "kural 5" \
-            "$what: $o açılış / $c kapanış yorumu — '} // $what ...' ekle"
+        [ "$o" -ne "$c" ] && report "$f" 1 "rule 5" \
+            "$what: $o opening / $c closing comments — add '} // $what ...'"
     done
 
-    # Kural 7 — C-style cast
+    # Rule 7 — C-style cast
     while IFS=: read -r n _; do
-        [ -n "$n" ] && report "$f" "$n" "kural 7" "C-style cast; static_cast kullan"
+        [ -n "$n" ] && report "$f" "$n" "rule 7" "C-style cast; use static_cast"
     done < <(grep -nP '\(\s*(int|unsigned|char|long|short|float|double)\s*\)\s*[A-Za-z_(]' "$f" | drop_comments)
 
-    # Kural 9 — derleyici eklentisi
+    # Rule 9 — compiler extension
     while IFS=: read -r n _; do
-        [ -n "$n" ] && report "$f" "$n" "kural 9" "__builtin_*; <bit> karşılığını kullan"
+        [ -n "$n" ] && report "$f" "$n" "rule 9" "__builtin_*; use the <bit> equivalent"
     done < <(grep -n '__builtin_' "$f" | drop_comments)
 
-    # --- best-practices maddelerinin mekanik olarak ölçülebilen kısmı ---
+    # --- the mechanically measurable part of the best-practices items ---
     case "$f" in src/*|include/*)
 
-        # bp-7 — sıcak yolda ayırma / syscall / log
+        # bp-7 — allocation / syscall / logging on the hot path
         while IFS=: read -r n _; do
-            [ -n "$n" ] && report "$f" "$n" "bp-7" "sıcak yolda I/O veya ayırma çağrısı"
+            [ -n "$n" ] && report "$f" "$n" "bp-7" "I/O or allocation call on the hot path"
         done < <(grep -nE '\b(printf|malloc|free|std::cout|std::cerr)\b' "$f" | drop_comments)
 
-        # bp-14 — fiyat matematiğinde float yok (load-factor hesabı muaf)
+        # bp-14 — no float in price math (load-factor calculation exempt)
         case "$f" in *flat_hash_map.hpp) ;; *)
             while IFS=: read -r n _; do
-                [ -n "$n" ] && report "$f" "$n" "bp-14" "float/double; Price tamsayı aritmetiği kullan"
+                [ -n "$n" ] && report "$f" "$n" "bp-14" "float/double; use Price integer arithmetic"
             done < <(grep -nE '\b(float|double)\b' "$f" | drop_comments)
         ;; esac
 
-        # bp-16 — catch (...) yalnızca ABI sınırında
+        # bp-16 — catch (...) only at the ABI boundary
         case "$f" in src/engine.cpp|src/engine_api.cpp) ;; *)
             while IFS=: read -r n _; do
-                [ -n "$n" ] && report "$f" "$n" "bp-16" "catch (...) yalnızca API sınırında olur"
+                [ -n "$n" ] && report "$f" "$n" "bp-16" "catch (...) belongs only at the API boundary"
             done < <(grep -n 'catch (\.\.\.)' "$f" | drop_comments)
         ;; esac
 
@@ -100,7 +100,7 @@ for f in "${files[@]:-}"; do
 done
 
 if [ "$violations" -gt 0 ]; then
-    echo "--- $violations ihlal. Kurallar: .claude/skills/cpp-standards/SKILL.md" >&2
+    echo "--- $violations violation(s). Rules: .claude/skills/cpp-standards/SKILL.md" >&2
     exit 1
 fi
 exit 0

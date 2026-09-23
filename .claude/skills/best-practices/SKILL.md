@@ -1,31 +1,31 @@
 ---
 name: best-practices
-description: xmatch'te iyi programlama pratikleri — tasarım ilkeleri, performans ve ölçeklenebilirlik, okunabilirlik, güvenlik ve sağlamlık. C++ kodu yazarken veya düzenlerken (.cpp/.hpp), refactor ederken, yeni bir modül/sınıf eklerken, code review yaparken ya da bir tasarım kararını gerekçelendirirken kullan. Biçim kuralları (girinti, isimlendirme, cast, include sırası) bu skill'in kapsamı değildir — onlar cpp-standards'a aittir.
+description: Good programming practices in xmatch — design principles, performance and scalability, readability, security and robustness. Use when writing or editing C++ code (.cpp/.hpp), refactoring, adding a new module/class, doing code review, or justifying a design decision. Formatting rules (indentation, naming, casts, include order) are out of scope for this skill — they belong to cpp-standards.
 disable-model-invocation: true
 allowed-tools: Read
 ---
 
-# İyi programlama pratikleri
+# Good programming practices
 
-C++ kodu yazarken, refactor ederken veya gözden geçirirken kararları şu dört
-başlık altında ver:
+When writing, refactoring or reviewing C++ code, make decisions under these four
+headings:
 
-1. **Tasarım ilkeleri** — sorumluluk dağılımı, arayüz genişliği, bilginin
-   nerede tanımlandığı.
-2. **Performans ve ölçeklenebilirlik** — karmaşıklık, sıcak yol maliyeti,
-   veri yerleşimi, ölçüme dayalı karar.
-3. **Okunabilirlik** — kontrol akışı, isimlendirme, soyutlama seviyesi,
-   yorumun işlevi.
-4. **Güvenlik ve sağlamlık** — girdi doğrulama, tamsayı aritmetiği, sınır
-   güvenliği, hata görünürlüğü.
+1. **Design principles** — distribution of responsibilities, interface width,
+   where information is defined.
+2. **Performance and scalability** — complexity, hot-path cost,
+   data layout, measurement-driven decisions.
+3. **Readability** — control flow, naming, level of abstraction,
+   the purpose of comments.
+4. **Security and robustness** — input validation, integer arithmetic, bounds
+   safety, error visibility.
 
-## Nasıl kullanılır
+## How to use
 
-Maddelerin tamamı ve her biri için kötü/iyi örnekler
-[`references/practices.md`](references/practices.md) dosyasındadır.
-Bir pratiği uygularken, bir tasarım kararını tartarken veya kod gözden
-geçirirken **önce o dosyayı oku**, sonra ilgili maddeyi numarasıyla gerekçe
-göster.
+The full list of items, with bad/good examples for each, is in
+[`references/practices.md`](references/practices.md).
+When applying a practice, weighing a design decision or reviewing code,
+**read that file first**, then cite the relevant item by its number as the
+justification.
 
-Bir madde ile bu projenin `CLAUDE.md`'sindeki invariant'lar çelişirse
-`CLAUDE.md` kazanır; bu dosya onu genelleştirir, yerine geçmez.
+If an item conflicts with the invariants in this project's `CLAUDE.md`,
+`CLAUDE.md` wins; this file generalizes it, it does not replace it.

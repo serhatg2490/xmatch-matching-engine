@@ -1,217 +1,217 @@
-# Pratikler
+# Practices
 
-Her madde: kural → neden → kötü/iyi → projeden çapa.
-Örnekler farkı göstermek içindir, derlenebilir olmaları gerekmez.
+Each item: rule → why → bad/good → anchor in the project.
+The examples are there to show the difference; they don't need to compile.
 
-## Tasarım ilkeleri
+## Design principles
 
-### 1. Public arayüzü dar tut
+### 1. Keep the public interface narrow
 
-Dışarı açtığın her sembol kalıcı bir sözleşmedir.
+Every symbol you expose is a permanent contract.
 
 ```cpp
-OrderPool* xmatch_get_pool(Engine*);              // kötü — iç tip sızıyor
-IMatchingEngine* xmatch_create(IEventListener*);  // iyi  — opak pointer
+OrderPool* xmatch_get_pool(Engine*);              // bad  — leaks an internal type
+IMatchingEngine* xmatch_create(IEventListener*);  // good — opaque pointer
 ```
 
-Projede: `include/xmatch/matching_engine_api.hpp` — kütüphane üç C sembolü arkasında.
+In the project: `include/xmatch/matching_engine_api.hpp` — the library sits behind three C symbols.
 
-### 2. Her tip tek bir sorumluluk taşısın
+### 2. Give each type a single responsibility
 
-Birleşik tipler ayrı ayrı test edilemez ve değiştirilemez.
+Combined types can't be tested or changed independently.
 
 ```cpp
-class OrderBook { Price index_to_price(...); OrderRecord* allocate(); };  // kötü
-class PriceLadder { /* fiyat <-> indeks */ };   // iyi — üç ayrı bina taşı
-class OrderPool   { /* slot ayırma      */ };
-class OrderBook   { /* seviyeler, FIFO  */ };
+class OrderBook { Price index_to_price(...); OrderRecord* allocate(); };  // bad
+class PriceLadder { /* price <-> index */ };   // good — three separate building blocks
+class OrderPool   { /* slot allocation */ };
+class OrderBook   { /* levels, FIFO    */ };
 ```
 
-Projede: `include/engine/` — `price_ladder` / `order_pool` / `order_book` ayrımı.
+In the project: `include/engine/` — the `price_ladder` / `order_pool` / `order_book` split.
 
-### 3. Tek kaynak ilkesi
+### 3. Single source of truth
 
-Aynı bilgi iki yerde tanımlanırsa er ya da geç biri güncellenmeden kalır.
+If the same information is defined in two places, sooner or later one of them is left un-updated.
 
 ```cpp
-Price breaks[] = {200000, 500000, 1000000};        // kötü — tablonun ikinci kopyası
-for (const TickBracket& b : kTickSchedule) { ... } // iyi  — tek tabloyu dolaş
+Price breaks[] = {200000, 500000, 1000000};        // bad  — a second copy of the table
+for (const TickBracket& b : kTickSchedule) { ... } // good — walk the one table
 ```
 
-Projede: `include/engine/tick_table.hpp` tek kaynak, `src/price_ladder.cpp` onu
-dolaşır. Bu ayrışma gerçek bir bug'dı (commit `d6627e0`).
+In the project: `include/engine/tick_table.hpp` is the single source, and `src/price_ladder.cpp`
+walks it. This divergence was a real bug (commit `d6627e0`).
 
-### 4. Sözleşmeyi derleme zamanına taşı
+### 4. Move the contract to compile time
 
-Derleyicinin yakalayabileceği hatayı çalışma zamanına bırakma.
+Don't leave an error the compiler could catch to run time.
 
 ```cpp
-// OrderRecord 48 bayt olmalı, dokümanlar buna dayanıyor   // kötü — temenni
-static_assert(sizeof(OrderRecord) == 48, "see DESIGN.md"); // iyi  — derleme kırılır
+// OrderRecord must be 48 bytes, the docs rely on it        // bad  — wishful thinking
+static_assert(sizeof(OrderRecord) == 48, "see DESIGN.md"); // good — the build breaks
 ```
 
-Projede: `include/engine/order_pool.hpp:37`, `include/engine/order_book.hpp:27`.
+In the project: `include/engine/order_pool.hpp:37`, `include/engine/order_book.hpp:27`.
 
-## Performans ve ölçeklenebilirlik
+## Performance and scalability
 
-### 5. Önce ölç, sonra optimize et
+### 5. Measure first, then optimize
 
-Tahmine dayalı optimizasyon kodu karmaşıklaştırır, kazancı çoğu zaman sıfırdır.
+Guess-based optimization complicates the code, and the gain is often zero.
 
 ```cpp
-// kötü: "elle açarsam hızlanır" varsayımı, ölçüm yok
-// iyi : değişiklik öncesi/sonrası ölç, üretilen kodu doğrula, gerekçeyi yaz
-//       "GCC 13 -O3'te bare bsr kalıyor, ek dal yok — objdump ile bakıldı"
+// bad : the "if I unroll it by hand it'll be faster" assumption, no measurement
+// good: measure before/after the change, verify the generated code, write down why
+//       "on GCC 13 -O3 a bare bsr remains, no extra branch — checked with objdump"
 ```
 
-Projede: `include/engine/level_bitset.hpp` — `<bit>` geçişi üretilen koda
-bakılarak doğrulandı; yöntem ve rakamlar `BENCHMARK.md`'de.
+In the project: `include/engine/level_bitset.hpp` — the switch to `<bit>` was verified by
+inspecting the generated code; the method and numbers are in `BENCHMARK.md`.
 
-### 6. Karmaşıklık mikro-optimizasyondan önce gelir
+### 6. Complexity comes before micro-optimization
 
-O(log n)'i O(1)'e indirmek, sabit çarpanla oynamaktan daha değerlidir.
+Reducing O(log n) to O(1) is worth more than tweaking a constant factor.
 
 ```cpp
-std::map<Price, Level> levels_;    // kötü — her erişim ağaç dolaşımı
-std::vector<Level> levels_;        // iyi  — levels_[ladder_.price_to_index(p)]
+std::map<Price, Level> levels_;    // bad  — every access walks a tree
+std::vector<Level> levels_;        // good — levels_[ladder_.price_to_index(p)]
 ```
 
-Projede: `include/engine/order_book.hpp` — `price_to_index`, `add_resting`,
-`top_of_book` hepsi O(1). Günlük fiyat bandı indeks kümesini sınırladığı için mümkün.
+In the project: `include/engine/order_book.hpp` — `price_to_index`, `add_resting` and
+`top_of_book` are all O(1). This is possible because the daily price band bounds the set of indices.
 
-### 7. Sıcak yolda ayırma, syscall, kilit ve log yok
+### 7. No allocation, syscall, lock or logging on the hot path
 
-Tek bir allocation ya da syscall p99'u mikrosaniyelere taşır.
+A single allocation or syscall pushes p99 into microseconds.
 
 ```cpp
-void Engine::submit(...) { orders_.push_back(OrderRecord{}); }  // kötü — büyüyebilir
-void Engine::configure(...) { pool_.reserve(kDefaultOrderCapacity); }  // iyi
-void Engine::submit(...) { std::uint32_t slot = pool_.allocate(); }    //     indeks ilerletir
+void Engine::submit(...) { orders_.push_back(OrderRecord{}); }  // bad  — may grow
+void Engine::configure(...) { pool_.reserve(kDefaultOrderCapacity); }  // good
+void Engine::submit(...) { std::uint32_t slot = pool_.allocate(); }    //      advances an index
 ```
 
-Projede: `src/engine.cpp` — `configure()` pool ve id indeksini önceden ayırır.
+In the project: `src/engine.cpp` — `configure()` pre-allocates the pool and the id index.
 
-### 8. Veri yerleşimini düşün
+### 8. Think about data layout
 
-Bitişik dizi taraması pointer takibinden kat kat hızlıdır; sık dokunulan
-struct dar kalmalıdır.
+Scanning a contiguous array is many times faster than chasing pointers; frequently
+touched structs must stay narrow.
 
 ```cpp
-struct Level { std::list<Order*> orders; };   // kötü — her adım cache miss
+struct Level { std::list<Order*> orders; };   // bad  — a cache miss at every step
 struct Level { std::uint32_t head, tail; Quantity total_qty;
-               std::uint32_t order_count; }; // iyi — 16 bayt, paddingsiz
+               std::uint32_t order_count; }; // good — 16 bytes, no padding
 ```
 
-Projede: `include/engine/order_book.hpp` — `Level` 16 bayt, iki düz dizi.
+In the project: `include/engine/order_book.hpp` — `Level` is 16 bytes, in two flat arrays.
 
-## Okunabilirlik
+## Readability
 
-### 9. Erken dönüş kullan
+### 9. Use early returns
 
-İç içe koşullar okuma yükünü katlar ve sıra değiştirmeyi zorlaştırır.
+Nested conditions multiply the reading load and make reordering hard.
 
 ```cpp
-if (book) { if (!dup) { if (qty) {...} else reject(...); } else reject(...); }  // kötü
+if (book) { if (!dup) { if (qty) {...} else reject(...); } else reject(...); }  // bad
 
-if (!book)   { reject(kUnknownInstrument); return; }   // iyi
+if (!book)   { reject(kUnknownInstrument); return; }   // good
 if (dup)     { reject(kDuplicateOrderId);  return; }
 if (qty == 0){ reject(kInvalidQuantity);   return; }
 ```
 
-Projede: `src/engine.cpp` `submit()` — guard zinciri `RejectReason` enum sırasına
-birebir eşlenir, böylece sözleşme koddan okunur.
+In the project: `src/engine.cpp` `submit()` — the guard chain maps one-to-one onto the
+`RejectReason` enum order, so the contract can be read from the code.
 
-### 10. İsim niyeti söylesin, sihirli sayı olmasın
+### 10. Let names state intent; no magic numbers
 
-Çıplak sabit okuyucuyu değerin nereden geldiğini aramaya zorlar.
+A bare constant forces the reader to go looking for where the value came from.
 
 ```cpp
-if (rec.next == 0xFFFFFFFFu) ...  pool_.reserve(16777216);              // kötü
-if (rec.next == kInvalidSlot) ... pool_.reserve(kDefaultOrderCapacity); // iyi
+if (rec.next == 0xFFFFFFFFu) ...  pool_.reserve(16777216);              // bad
+if (rec.next == kInvalidSlot) ... pool_.reserve(kDefaultOrderCapacity); // good
 ```
 
-Projede: `kInvalidSlot`, `kChunkSize` (`order_pool.hpp`), `kDefaultOrderCapacity`
+In the project: `kInvalidSlot`, `kChunkSize` (`order_pool.hpp`), `kDefaultOrderCapacity`
 (`engine.cpp`).
 
-### 11. Bir fonksiyon tek soyutlama seviyesinde kalsın
+### 11. Keep a function at a single level of abstraction
 
-Üst düzey akışla bit düzeyi detayı karıştırmak fonksiyonu test edilemez yapar.
+Mixing high-level flow with bit-level detail makes a function untestable.
 
 ```cpp
-while (...) { std::uint64_t w = words_[i >> 6] & mask; ... }        // kötü
-while (agg.open_qty > 0 && book.has_best(opp)) { ... }              // iyi
+while (...) { std::uint64_t w = words_[i >> 6] & mask; ... }        // bad
+while (agg.open_qty > 0 && book.has_best(opp)) { ... }              // good
 ```
 
-Projede: `src/engine.cpp` `run_matching()` yalnızca akışı taşır; kelime taraması
-`LevelBitset` içinde kalır.
+In the project: `src/engine.cpp` `run_matching()` carries only the flow; the word scan
+stays inside `LevelBitset`.
 
-### 12. Yorum "neden"i açıklasın
+### 12. Comments should explain "why"
 
-"Ne yaptığı" koddan okunur; yorumun işi kodun söyleyemediğini söylemektir.
+"What it does" can be read from the code; a comment's job is to say what the code can't.
 
 ```cpp
-// kelime sıfır değil mi diye bak                                    // kötü
-// Guard çağrıdan ÖNCE kalmalı: GCC buradan w != 0'ı kanıtlayıp bare // iyi
-// bsr üretiyor. Kaldırılırsa sıfır testi dal olarak geri geliyor.
+// check whether the word is non-zero                                // bad
+// The guard must stay BEFORE the call: GCC proves w != 0 from it    // good
+// and emits a bare bsr. Remove it and the zero test comes back as a branch.
 if (w) return ...;
 ```
 
-Projede: `include/engine/level_bitset.hpp` başlık yorumu.
+In the project: the header comment of `include/engine/level_bitset.hpp`.
 
-## Güvenlik ve sağlamlık
+## Security and robustness
 
-### 13. Dış girdiye güvenme, sınırda doğrula
+### 13. Don't trust external input; validate at the boundary
 
-Doğrulama tek yerde ve belirli bir sırada olmalı, reddin sebebi çağırana bildirilmeli.
+Validation must happen in one place and in a fixed order, and the reason for a rejection must be reported to the caller.
 
 ```cpp
-book->add_resting(pool_, slot, o.side, o.price);      // kötü — doğrulanmamış girdi
+book->add_resting(pool_, slot, o.side, o.price);      // bad  — unvalidated input
 
-if (!is_tick_aligned(price))       { reject(kInvalidPriceTick); return; }  // iyi
+if (!is_tick_aligned(price))       { reject(kInvalidPriceTick); return; }  // good
 if (book->price_to_index(price)<0) { reject(kPriceOutOfBand);   return; }
 ```
 
-Projede: `src/engine.cpp` — `submit()` ve `replace()` aynı sırayı uygular.
+In the project: `src/engine.cpp` — `submit()` and `replace()` apply the same order.
 
-### 14. Tamsayı aritmetiğine dikkat et
+### 14. Be careful with integer arithmetic
 
-Float para hesabında sessizce sapar; işaretli/işaretsiz karışımı sessizce sarar.
+Floats silently drift in money calculations; mixing signed/unsigned silently wraps.
 
 ```cpp
-double px = 12.34;  for (int i = 0; i < levels_.size(); ++i)          // kötü
-Price px = 123400;  for (std::size_t i = 0; i < levels_.size(); ++i)  // iyi
+double px = 12.34;  for (int i = 0; i < levels_.size(); ++i)          // bad
+Price px = 123400;  for (std::size_t i = 0; i < levels_.size(); ++i)  // good
 ```
 
-Projede: `Price` = `int64_t` @ 1/10000 birim; fiyat, tick ve band matematiğinde
-`float`/`double` yok. (`flat_hash_map.hpp`'deki `kMaxLoadFactor` sıcak yolda
-olmayan, fiyatla ilgisiz bir kapasite hesabıdır — kural fiyat matematiği içindir.)
+In the project: `Price` = `int64_t` @ 1/10000 units; no `float`/`double` in price, tick or
+band math. (`kMaxLoadFactor` in `flat_hash_map.hpp` is a capacity calculation that is
+off the hot path and unrelated to prices — the rule is about price math.)
 
-### 15. İndeks erişiminde sınırı garanti et
+### 15. Guarantee bounds on index access
 
-İndeksin geçerliliği hesaplandığı yerde kanıtlanmalı, kullanıldığı yerde varsayılmamalı.
+An index's validity must be proven where it is computed, not assumed where it is used.
 
 ```cpp
-levels_[ladder_.price_to_index(price)].total_qty += qty;   // kötü — -1 dönebilir
+levels_[ladder_.price_to_index(price)].total_qty += qty;   // bad  — may return -1
 
-std::int64_t idx = ladder_.price_to_index(price);          // iyi — sentinel açık
+std::int64_t idx = ladder_.price_to_index(price);          // good — sentinel made explicit
 if (idx < 0) { reject(kPriceOutOfBand); return; }
 ```
 
-Projede: `src/price_ladder.cpp` — band veya tick ihlalinde `-1`; `submit()` bunu
-resting'den önce kontrol eder.
+In the project: `src/price_ladder.cpp` — `-1` on a band or tick violation; `submit()` checks
+it before the order rests.
 
-### 16. Hatayı sessizce yutma
+### 16. Don't swallow errors silently
 
-`catch (...)` hata yönetimi değil sınır koruyucusudur; içeride kullanılırsa bug gizler.
+`catch (...)` is a boundary guard, not error handling; used inside, it hides bugs.
 
 ```cpp
-void OrderBook::add_resting(...) { try { ... } catch (...) {} }   // kötü
+void OrderBook::add_resting(...) { try { ... } catch (...) {} }   // bad
 
-IMatchingEngine* xmatch_create(IEventListener* l) {               // iyi
+IMatchingEngine* xmatch_create(IEventListener* l) {               // good
     try { return new detail::Engine(l); }
-    catch (...) { return nullptr; }   // exception C sınırını geçemez
+    catch (...) { return nullptr; }   // an exception can't cross the C boundary
 }
 ```
 
-Projede: `src/engine_api.cpp` ve `detail::Engine`'in public metotları — başka
-hiçbir yerde yok.
+In the project: `src/engine_api.cpp` and the public methods of `detail::Engine` — nowhere
+else.
