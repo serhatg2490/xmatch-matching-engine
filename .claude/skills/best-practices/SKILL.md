@@ -1,6 +1,8 @@
 ---
 name: best-practices
 description: xmatch'te iyi programlama pratikleri — tasarım ilkeleri, performans ve ölçeklenebilirlik, okunabilirlik, güvenlik ve sağlamlık. C++ kodu yazarken veya düzenlerken (.cpp/.hpp), refactor ederken, yeni bir modül/sınıf eklerken, code review yaparken ya da bir tasarım kararını gerekçelendirirken kullan. Biçim kuralları (girinti, isimlendirme, cast, include sırası) bu skill'in kapsamı değildir — onlar cpp-standards'a aittir.
+disable-model-invocation: true
+allowed-tools: Read
 ---
 
 # İyi programlama pratikleri

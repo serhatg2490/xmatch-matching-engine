@@ -1,6 +1,8 @@
 ---
 name: cpp-standards
 description: xmatch C/C++ biçim ve mekanik kodlama standardı — girinti, satır uzunluğu, include guard ve sırası, namespace kapanışı, isimlendirme, cast, tamsayı tipleri. .cpp/.hpp/.c/.h dosyası yazarken veya düzenlerken, yeni dosya eklerken ve code review'da uygula. Tasarım/performans/güvenlik ilkeleri bu skill'in kapsamı değildir — onlar best-practices skill'ine aittir.
+disable-model-invocation: true
+allowed-tools: Read
 ---
 
 # C/C++ kodlama standardı
