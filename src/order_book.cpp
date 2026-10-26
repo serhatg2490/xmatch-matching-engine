@@ -2,11 +2,17 @@
 
 #include "engine/tick_table.hpp"
 
+#include <type_traits>
+#include <utility>
+
 namespace xmatch::detail {
 
 void OrderBook::configure(InstrumentId instrument_id, Price reference_price, std::uint32_t band_bps) {
-    instrument_id_ = instrument_id;
-    reference_price_ = reference_price;
+    PriceLadder ladder;
+    std::vector<Level> bid_levels;
+    std::vector<Level> ask_levels;
+    LevelBitset bid_bitmap;
+    LevelBitset ask_bitmap;
 
     Price delta = (reference_price * static_cast<Price>(band_bps)) / 10000;
     Price raw_lo = reference_price - delta;
@@ -15,13 +21,26 @@ void OrderBook::configure(InstrumentId instrument_id, Price reference_price, std
 
     Price lo = ceil_to_tick(raw_lo);
     Price hi = floor_to_tick(raw_hi);
-    ladder_.build(lo, hi);
+    ladder.build(lo, hi);
 
-    std::uint32_t n = ladder_.size();
-    bid_levels_.assign(n, Level{});
-    ask_levels_.assign(n, Level{});
-    bid_bitmap_.resize(n);
-    ask_bitmap_.resize(n);
+    std::uint32_t n = ladder.size();
+    bid_levels.assign(n, Level{});
+    ask_levels.assign(n, Level{});
+    bid_bitmap.resize(n);
+    ask_bitmap.resize(n);
+
+    static_assert(std::is_nothrow_swappable_v<PriceLadder>, "PriceLadder must be nothrow swappable");
+    static_assert(std::is_nothrow_swappable_v<std::vector<Level>>, "std::vector<Level> must be nothrow swappable");
+    static_assert(std::is_nothrow_swappable_v<LevelBitset>, "LevelBitset must be nothrow swappable");
+
+    std::swap(ladder_, ladder);
+    std::swap(bid_levels_, bid_levels);
+    std::swap(ask_levels_, ask_levels);
+    std::swap(bid_bitmap_, bid_bitmap);
+    std::swap(ask_bitmap_, ask_bitmap);
+
+    instrument_id_ = instrument_id;
+    reference_price_ = reference_price;
     best_bid_idx_ = -1;
     best_ask_idx_ = -1;
 }
