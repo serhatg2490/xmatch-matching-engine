@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include <utility>
+#include <type_traits>
 
 #include "xmatch/matching_engine_api.hpp"
 
@@ -51,8 +53,21 @@ public:
     OrderPool() { chunks_.reserve(64); }
 
     void reserve(std::size_t n_slots) {
+        std::vector<std::unique_ptr<OrderRecord[]>> chunks;
+        
         std::size_t needed_chunks = (n_slots + kChunkSize - 1) / kChunkSize;
-        while (chunks_.size() < needed_chunks) add_chunk();
+        if(chunks_.size() >= needed_chunks) return;
+
+        while (chunks.size() < needed_chunks - chunks_.size()) {
+            chunks.push_back(std::make_unique<OrderRecord[]>(kChunkSize));
+        }
+
+        chunks_.reserve(needed_chunks);
+        static_assert(std::is_nothrow_move_constructible_v<std::unique_ptr<OrderRecord[]>>,
+                      "std::unique_ptr<OrderRecord[]> must be nothrow move constructible");
+        for (auto& chunk : chunks) {
+            chunks_.push_back(std::move(chunk));
+        }
     }
 
     std::uint32_t allocate() {
