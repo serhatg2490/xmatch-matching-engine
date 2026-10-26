@@ -55,7 +55,6 @@ public:
 
     OrderPool() { chunks_.reserve(64); }
 
-
     void reserve(std::size_t n_slots) {
         std::size_t needed_chunks = (n_slots + kChunkSize - 1) / kChunkSize;
         if (chunks_.size() >= needed_chunks) return;

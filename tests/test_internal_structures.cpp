@@ -200,3 +200,62 @@ TEST(OrderPoolTest, SurvivesCrossingAChunkBoundary) {
     EXPECT_EQ(pool.size(), kOverChunk);
     EXPECT_EQ(pool[kOverChunk - 1].id, kOverChunk - 1);
 }
+
+TEST(OrderPoolTest, ReserveOnPopulatedPoolKeepsExistingSlots) {
+    OrderPool pool;
+    std::uint32_t a = pool.allocate();
+    std::uint32_t b = pool.allocate();
+    pool[a].id = 123;
+    pool[b].id = 456;
+    OrderRecord& rec_a = pool[a];
+    OrderRecord& rec_b = pool[b];
+
+    pool.reserve(3 * OrderPool::kChunkSize); // force growth
+
+    EXPECT_EQ(&pool[a], &rec_a) << "existing slots must remain addressable after reserve";
+    EXPECT_EQ(&pool[b], &rec_b) << "existing slots must remain addressable after reserve";
+    EXPECT_EQ(pool[a].id, 123u);
+    EXPECT_EQ(pool[b].id, 456u);
+    EXPECT_EQ(pool.size(), 2u);
+    EXPECT_EQ(pool.allocate(), 2u);
+}
+
+TEST(OrderPoolTest, ReserveSmallerThanCurrentIsNoOp) {
+    OrderPool pool;
+    std::uint32_t a = pool.allocate();
+    std::uint32_t b = pool.allocate();
+    pool[a].id = 123;
+    pool[b].id = 456;
+    OrderRecord& rec_a = pool[a];
+    OrderRecord& rec_b = pool[b];
+
+    pool.reserve(0);
+    pool.reserve(1);
+
+    EXPECT_EQ(&pool[a], &rec_a) << "existing slots must remain addressable after reserve";
+    EXPECT_EQ(&pool[b], &rec_b) << "existing slots must remain addressable after reserve";
+    EXPECT_EQ(pool[a].id, 123u);
+    EXPECT_EQ(pool[b].id, 456u);
+    EXPECT_EQ(pool.size(), 2u);
+    EXPECT_EQ(pool.allocate(), 2u);
+}
+
+TEST(OrderPoolTest, FailedReserveLeavesPoolUnchanged) {
+    OrderPool pool;
+    std::uint32_t a = pool.allocate();
+    std::uint32_t b = pool.allocate();
+    pool[a].id = 123;
+    pool[b].id = 456;
+    OrderRecord* rec_a = &pool[a];
+    OrderRecord* rec_b = &pool[b];
+
+    // With overcommit_memory = 0 (default) in Linux, this should throw std::bad_alloc.
+    // On machines with overcommit_memory=1, OOM killer may terminate the process instead of throwing.
+    EXPECT_THROW(pool.reserve(std::size_t{1} << 60), std::exception) << "should throw std::bad_alloc on 64-bit systems";
+
+    EXPECT_EQ(&pool[a], rec_a) << "existing slots must remain addressable after failed reserve";
+    EXPECT_EQ(&pool[b], rec_b) << "existing slots must remain addressable after failed reserve";
+    EXPECT_EQ(pool[a].id, 123u);
+    EXPECT_EQ(pool[b].id, 456u);
+    EXPECT_EQ(pool.size(), 2u);
+}
