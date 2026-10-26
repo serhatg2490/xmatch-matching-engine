@@ -8,10 +8,8 @@
 namespace xmatch::detail {
 
 void PriceLadder::build(Price band_lo, Price band_hi) {
-    segments_.clear();
-    total_count_ = 0;
-    band_lo_ = band_lo;
-    band_hi_ = band_hi;
+    std::vector<Segment> segments;
+    segments.reserve(kTickBracketCount);
 
     // Walk the one shared tick schedule (engine/tick_table.hpp) rather than a
     // private copy of its breakpoints, so adding or moving a bracket there
@@ -28,11 +26,15 @@ void PriceLadder::build(Price band_lo, Price band_hi) {
                                  ? band_hi
                                  : std::min(band_hi, next_breakpoint - step);
         std::uint32_t count = static_cast<std::uint32_t>((regime_last - cur) / step) + 1;
-        segments_.push_back(Segment{cur, regime_last, step, offset, count});
+        segments.push_back(Segment{cur, regime_last, step, offset, count});
         offset += count;
         cur = regime_last + step;
     }
+    // Commit only after every allocating step has succeeded (strong guarantee)
+    segments_.swap(segments);
     total_count_ = offset;
+    band_lo_ = band_lo;
+    band_hi_ = band_hi;
 }
 
 std::int64_t PriceLadder::price_to_index(Price price) const {
