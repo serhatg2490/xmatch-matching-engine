@@ -1,6 +1,8 @@
 #include "engine/engine.hpp"
 
 #include <algorithm>
+#include <type_traits>
+#include <utility>
 
 #include "engine/tick_table.hpp"
 
@@ -18,27 +20,38 @@ Engine::Engine(IEventListener* listener) : listener_(listener) {}
 
 void Engine::configure(const InstrumentConfig* instruments, std::size_t count) {
     try {
-        // One-shot. A second call would reset books that still hold open
-        // orders and re-insert instrument ids into the index, corrupting
-        // both, so it is ignored. The flag is set before any work so a
-        // first call that fails part-way is not retried on top of its
-        // partial state either.
+        // If the engine is already configured, do not configure it again.
+        // If the configuration fails, the engine remains unconfigured and can be retried.
         if (configured_) return;
-        configured_ = true;
 
-        books_.resize(count);
-        instrument_index_.reserve(count);
+        std::vector<OrderBook> books(count);
+
+        FlatHashMap instrument_index;
+        instrument_index.reserve(count);
+
         for (std::size_t i = 0; i < count; ++i) {
             const InstrumentConfig& cfg = instruments[i];
-            books_[i].configure(cfg.instrument_id, cfg.reference_price, cfg.band_bps);
-            instrument_index_.insert(cfg.instrument_id, static_cast<std::uint32_t>(i));
+            books[i].configure(cfg.instrument_id, cfg.reference_price, cfg.band_bps);
+            instrument_index.insert(cfg.instrument_id, static_cast<std::uint32_t>(i));
         }
-        pool_.reserve(kDefaultOrderCapacity);
-        order_index_.reserve(kDefaultOrderCapacity);
+
+        OrderPool pool;
+        pool.reserve(kDefaultOrderCapacity);
+
+        FlatHashMap order_index;
+        order_index.reserve(kDefaultOrderCapacity);
+
+        static_assert(std::is_nothrow_move_assignable_v<OrderPool>, "OrderPool must be nothrow move assignable");
+        static_assert(std::is_nothrow_move_assignable_v<FlatHashMap>, "FlatHashMap must be nothrow move assignable");
+        books_ = std::move(books);
+        pool_ = std::move(pool);
+        instrument_index_ = std::move(instrument_index);
+        order_index_ = std::move(order_index);
+
+        configured_ = true;
     } catch (...) {
-        // Never let an exception cross the API boundary. A failure here
-        // leaves the engine unusable, but that's preferable to crashing
-        // the host process.
+        // Never let an exception cross the API boundary.
+        // A failure here leaves the engine unconfigured.
     }
 }
 

@@ -204,8 +204,10 @@ public:
 
     // Declares the tradable instruments. Call this once, before anything
     // else; the engine copies what it needs and does not retain the pointer.
-    // Only the first call takes effect: any later call is ignored and leaves
-    // the configured instruments and the book untouched.
+    // Only the first successful call takes effect: any later call is ignored
+    // and leaves the configured instruments and the book untouched.
+    // A call that fails has no effect, so the engine stays unconfigured and
+    // configure() may be called again.
     virtual void configure(const InstrumentConfig* instruments,
                            std::size_t count) = 0;
 

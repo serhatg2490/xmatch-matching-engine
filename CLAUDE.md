@@ -89,6 +89,10 @@ prose and the tests together.
   success paths.** All large allocation belongs in `configure()`.
 - **No exception crosses the C ABI.** Every public `Engine` method body is wrapped in
   `try { ... } catch (...) {}`. This is the one place blanket catching is correct.
+- **`configure()` gives the strong exception guarantee.** It builds books, indexes and pool
+  into locals and commits them with nothrow moves (`static_assert`ed for `OrderPool` and
+  `FlatHashMap`), setting `configured_` last. A failed call leaves the engine unconfigured
+  and may be retried; only the first *successful* call takes effect.
 - **Integer price arithmetic only** — `Price` is `int64_t` at 1/10000 units. No `float`
   or `double` anywhere near tick, band, or trade-price math.
 - **Pool slots are never recycled and `FlatHashMap` never erases.** `order_id` is unique

@@ -102,7 +102,7 @@ TEST(MultiInstrumentTest, TopOfBookOnUnconfiguredInstrumentIsSafelyEmpty) {
     EXPECT_EQ(tob.ask_quantity, 0u);
 }
 
-TEST(MultiInstrumentTest, SecondConfigureIsIgnored) {
+TEST(MultiInstrumentTest, ConfigureAfterFirstSuccessfulConfigureIsIgnored) {
     RecordingListener listener;
     EngineHandle engine(&listener);
     InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
@@ -127,6 +127,26 @@ TEST(MultiInstrumentTest, SecondConfigureIsIgnored) {
     EXPECT_EQ(listener.events[1], Accepted(2));
     EXPECT_EQ(listener.events[2], Rejected(3, RejectReason::kUnknownInstrument));
     EXPECT_EQ(engine->top_of_book(1).bid_quantity, 5u);
+}
+
+TEST(MultiInstrumentTest, CanBeConfiguredAfterFirstConfigureFails) {
+    RecordingListener listener;
+    EngineHandle engine(&listener);
+    InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
+    // Configuring with a null pointer and SIZE_MAX throws length_error
+    // which is caught and ignored, so the engine is left unconfigured.
+    engine->configure(nullptr, SIZE_MAX);
+    // Now configure with a proper instrument, which should succeed 
+    // and leave the engine usable.
+    engine->configure(&cfg, 1);
+    engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10));
+
+    // There is one resting order on instrument 1, and the book is consistent.
+    TopOfBook tob = engine->top_of_book(1);
+    EXPECT_EQ(tob.bid_price, Px(25));
+    EXPECT_EQ(tob.bid_quantity, 10u);
+    ASSERT_EQ(listener.events.size(), 1u);
+    EXPECT_EQ(listener.events[0], Accepted(1));
 }
 
 } // namespace
