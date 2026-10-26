@@ -108,10 +108,11 @@ private:
         // when the capacity is a power of two. Every caller happens to pass
         // one today; assert it rather than trust that it stays true.
         assert(std::has_single_bit(new_capacity) && "FlatHashMap capacity must be a power of two");
-        std::vector<Slot> old = std::move(slots_);
+        // Allocate before touching any member so bad_alloc leaves the map intact.
+        std::vector<Slot> old(new_capacity, Slot{});
+        std::swap(slots_, old);
         capacity_ = new_capacity;
         mask_ = capacity_ - 1;
-        slots_.assign(capacity_, Slot{});
         size_ = 0;
         for (Slot& s : old) {
             if (s.occupied) insert(s.key, s.value);
