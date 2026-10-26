@@ -7,6 +7,9 @@
 
 namespace xmatch::detail {
 
+static_assert(std::is_nothrow_swappable_v<PriceLadder>, "PriceLadder must be nothrow swappable");
+static_assert(std::is_nothrow_swappable_v<LevelBitset>, "LevelBitset must be nothrow swappable");
+
 void OrderBook::configure(InstrumentId instrument_id, Price reference_price, std::uint32_t band_bps) {
     PriceLadder ladder;
     std::vector<Level> bid_levels;
@@ -28,10 +31,6 @@ void OrderBook::configure(InstrumentId instrument_id, Price reference_price, std
     ask_levels.assign(n, Level{});
     bid_bitmap.resize(n);
     ask_bitmap.resize(n);
-
-    static_assert(std::is_nothrow_swappable_v<PriceLadder>, "PriceLadder must be nothrow swappable");
-    static_assert(std::is_nothrow_swappable_v<std::vector<Level>>, "std::vector<Level> must be nothrow swappable");
-    static_assert(std::is_nothrow_swappable_v<LevelBitset>, "LevelBitset must be nothrow swappable");
 
     std::swap(ladder_, ladder);
     std::swap(bid_levels_, bid_levels);

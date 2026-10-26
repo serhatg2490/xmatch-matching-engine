@@ -2,9 +2,9 @@
 
 #include <cstdint>
 #include <memory>
-#include <vector>
-#include <utility>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 #include "xmatch/matching_engine_api.hpp"
 
@@ -39,6 +39,9 @@ struct OrderRecord {
 static_assert(sizeof(OrderRecord) == 48,
               "OrderRecord must stay 48 bytes; see the memory layout section of DESIGN.md");
 static_assert(alignof(OrderRecord) == 8, "OrderRecord should need no more than 8-byte alignment");
+static_assert(std::is_nothrow_move_constructible_v<std::unique_ptr<OrderRecord[]>>,
+              "std::unique_ptr<OrderRecord[]> must be nothrow move constructible");
+    
 
 // Chunked, append-only pool of OrderRecord. Growth allocates a whole new
 // chunk (never moves/copies existing elements), so slot indices and
@@ -52,19 +55,18 @@ public:
 
     OrderPool() { chunks_.reserve(64); }
 
-    void reserve(std::size_t n_slots) {
-        std::vector<std::unique_ptr<OrderRecord[]>> chunks;
-        
-        std::size_t needed_chunks = (n_slots + kChunkSize - 1) / kChunkSize;
-        if(chunks_.size() >= needed_chunks) return;
 
+    void reserve(std::size_t n_slots) {
+        std::size_t needed_chunks = (n_slots + kChunkSize - 1) / kChunkSize;
+        if (chunks_.size() >= needed_chunks) return;
+
+        std::vector<std::unique_ptr<OrderRecord[]>> chunks;
+        chunks.reserve(needed_chunks - chunks_.size());
         while (chunks.size() < needed_chunks - chunks_.size()) {
             chunks.push_back(std::make_unique<OrderRecord[]>(kChunkSize));
         }
 
         chunks_.reserve(needed_chunks);
-        static_assert(std::is_nothrow_move_constructible_v<std::unique_ptr<OrderRecord[]>>,
-                      "std::unique_ptr<OrderRecord[]> must be nothrow move constructible");
         for (auto& chunk : chunks) {
             chunks_.push_back(std::move(chunk));
         }
