@@ -58,7 +58,10 @@ at all — the one-time cost lands in `configure()`, which isn't measured.
 permanent, so there's no tombstone/backward-shift-deletion complexity to
 pay for. Linear probing, `splitmix64`-mixed keys (client ids are often
 small sequential integers, which would otherwise cluster), load factor
-capped at 0.7, pre-reserved alongside the pool. `std::unordered_map` was
+capped at 0.7, pre-reserved alongside the pool. The table is grow-only:
+`rehash` never goes below the capacity its entries need, allocates the new
+array before touching any member, and re-places entries without a load
+check, so a failed growth leaves the map intact. `std::unordered_map` was
 rejected here specifically because of its node-per-entry allocation on
 every `submit()` — one array-backed table amortizes to O(1) with no hot-path
 `malloc`.

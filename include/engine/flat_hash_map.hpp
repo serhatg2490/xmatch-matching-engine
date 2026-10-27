@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
 #include <vector>
@@ -16,6 +17,9 @@ namespace xmatch::detail {
 //  - reserve() up front sizes the backing array so the benchmark's ~10M
 //    operations don't trigger a rehash on the hot path; growth still works
 //    (doubling + full rehash) if the caller undershoots the reserve.
+//  - Grow-only: since size_ never decreases there is nothing to gain from
+//    shrinking, and rehash() never goes below capacity_for(size_). That
+//    floor is what lets the re-placement loop run without a nested rehash.
 //  - Keys are run through a 64-bit avalanche mix (splitmix64 finalizer)
 //    before probing, since client order ids are frequently small sequential
 //    integers that would otherwise cluster in the low buckets.
@@ -25,13 +29,9 @@ public:
 
     FlatHashMap() { rehash(1u << 4); }
 
+    // Grow-only: a request at or below the current capacity is a no-op.
     void reserve(std::size_t n) {
-        std::size_t needed = static_cast<std::size_t>(static_cast<double>(n) / kMaxLoadFactor) + 1;
-        // std::bit_ceil (<bit>, C++20) is the smallest power of two >= needed,
-        // replacing a shift-until-big-enough loop. Powers of two are not
-        // incidental here: probing masks with capacity_ - 1, so a capacity
-        // that is not a power of two would silently corrupt the index.
-        std::size_t cap = std::bit_ceil(needed);
+        std::size_t cap = capacity_for(n);
         if (cap > capacity_) rehash(cap);
     }
 
@@ -67,19 +67,7 @@ public:
         if (size_ + 1 > static_cast<std::size_t>(static_cast<double>(capacity_) * kMaxLoadFactor)) {
             rehash(capacity_ << 1);
         }
-        std::size_t idx = mix(key) & mask_;
-        for (;;) {
-            Slot& s = slots_[idx];
-            if (!s.occupied) {
-                s.occupied = true;
-                s.key = key;
-                s.value = value;
-                ++size_;
-                return;
-            }
-            assert(s.key != key && "duplicate insert into FlatHashMap");
-            idx = (idx + 1) & mask_;
-        }
+        place(key, value);
     }
 
     std::size_t size() const { return size_; }
@@ -92,6 +80,16 @@ private:
     };
 
     static constexpr double kMaxLoadFactor = 0.7;
+
+    // Smallest capacity that holds n entries under kMaxLoadFactor.
+    // std::bit_ceil (<bit>, C++20) is the smallest power of two >= needed,
+    // replacing a shift-until-big-enough loop. Powers of two are not
+    // incidental here: probing masks with capacity_ - 1, so a capacity
+    // that is not a power of two would silently corrupt the index.
+    static std::size_t capacity_for(std::size_t n) {
+        std::size_t needed = static_cast<std::size_t>(static_cast<double>(n) / kMaxLoadFactor) + 1;
+        return std::bit_ceil(needed);
+    }
 
     static std::uint64_t mix(std::uint64_t x) {
         // splitmix64 finalizer
@@ -108,14 +106,38 @@ private:
         // when the capacity is a power of two. Every caller happens to pass
         // one today; assert it rather than trust that it stays true.
         assert(std::has_single_bit(new_capacity) && "FlatHashMap capacity must be a power of two");
+        // Grow-only: a capacity too small for the current entries is a caller
+        // bug. Catch it in debug; in release, clamp up to the floor.
+        assert(new_capacity >= capacity_for(size_) && "FlatHashMap never shrinks below what its entries need");
+        new_capacity = std::max(new_capacity, capacity_for(size_));
         // Allocate before touching any member so bad_alloc leaves the map intact.
         std::vector<Slot> old(new_capacity, Slot{});
         std::swap(slots_, old);
         capacity_ = new_capacity;
         mask_ = capacity_ - 1;
         size_ = 0;
+        // place(), not insert(): no load check means no nested rehash, so
+        // nothing past the allocation above can throw.
         for (Slot& s : old) {
-            if (s.occupied) insert(s.key, s.value);
+            if (s.occupied) place(s.key, s.value);
+        }
+    }
+
+    // Probes for the first free slot and stores key->value. No load-factor
+    // check; callers guarantee there is room.
+    void place(std::uint64_t key, std::uint32_t value) {
+        std::size_t idx = mix(key) & mask_;
+        for (;;) {
+            Slot& s = slots_[idx];
+            if (!s.occupied) {
+                s.occupied = true;
+                s.key = key;
+                s.value = value;
+                ++size_;
+                return;
+            }
+            assert(s.key != key && "duplicate insert into FlatHashMap");
+            idx = (idx + 1) & mask_;
         }
     }
 

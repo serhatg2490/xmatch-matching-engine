@@ -169,6 +169,42 @@ TEST(FlatHashMapTest, ReserveAvoidsNeedingLaterGrowthButStillWorks) {
     }
 }
 
+TEST(FlatHashMapTest, ReserveSmallerThanCurrentIsNoOp) {
+    FlatHashMap map;
+    for (std::uint64_t i = 0; i < 1000; ++i) map.insert(i, static_cast<std::uint32_t>(i));
+    std::uint32_t* v = map.find(500);
+
+    map.reserve(0);
+    map.reserve(1);
+    map.reserve(10);
+
+    EXPECT_EQ(map.find(500), v) << "a smaller reserve must not rehash";
+    EXPECT_EQ(map.size(), 1000u);
+    for (std::uint64_t i = 0; i < 1000; ++i) {
+        ASSERT_NE(map.find(i), nullptr);
+        EXPECT_EQ(*map.find(i), i);
+    }
+}
+
+TEST(FlatHashMapTest, FailedReserveLeavesMapUnchanged) {
+    FlatHashMap map;
+    for (std::uint64_t i = 0; i < 1000; ++i) map.insert(i, static_cast<std::uint32_t>(i));
+    std::uint32_t* v = map.find(500);
+
+    // 2^61 slots exceeds vector::max_size(), so this throws (length_error or bad_alloc).
+    EXPECT_THROW(map.reserve(std::size_t{1} << 60), std::exception);
+
+    EXPECT_EQ(map.find(500), v) << "a failed reserve must leave the slot array in place";
+    EXPECT_EQ(map.size(), 1000u);
+    for (std::uint64_t i = 0; i < 1000; ++i) {
+        ASSERT_NE(map.find(i), nullptr);
+        EXPECT_EQ(*map.find(i), i);
+    }
+    map.insert(5000, 5000);
+    ASSERT_NE(map.find(5000), nullptr);
+    EXPECT_EQ(*map.find(5000), 5000u);
+}
+
 // --------------------------------------------------------------------- //
 // OrderPool
 // --------------------------------------------------------------------- //
