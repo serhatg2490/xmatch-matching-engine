@@ -82,7 +82,21 @@ inconvenience, so the type system rules it out.
   (...) {}` — no exception may cross the C ABI boundary, since the host may
   well be built with a different toolchain. This is the one blanket
   exception-catching in the codebase, and it's a correctness requirement,
-  not a style choice.
+  not a style choice. `configure()` is the one method that reports what it
+  caught: `std::bad_alloc` becomes `ConfigureResult::kOutOfMemory`, anything
+  else `kInternalError`.
+- `configure()` validates every input before it builds anything (non-null
+  pointer, `0 < count <= UINT32_MAX`, tick-aligned reference price no larger
+  than `INT64_MAX / kMaxBandBps`, `band_bps <= kMaxBandBps`, unique
+  instrument ids) and returns `kInvalidArgument` otherwise. The reference
+  price bound keeps `ref · band_bps` and the band's upper edge inside
+  `int64_t`. A tick-aligned reference also guarantees the ladder holds at
+  least one level, even with `band_bps = 0`. The band divisor is
+  `kBpsPerUnit`, not `kPriceScale`: both are 10000, but one converts basis
+  points to a ratio and the other fixes the price's decimal places.
+- The unconfigured-engine guard in `submit`/`cancel`/`replace` is one
+  well-predicted branch on `configured_`; side-by-side runs against the
+  previous build showed no measurable latency change.
 - `replace()`'s "keeps priority" path (`OrderBook::replace_in_place`)
   splices the new slot into the *exact* linked-list position the old one
   held — no unlink-then-append, so a pure quantity decrease never touches
@@ -112,6 +126,12 @@ inconvenience, so the type system rules it out.
 The API contract leaves a few corners to the implementation. These are the
 readings this engine commits to, and the tests pin each of them down.
 
+- An engine with no successful `configure()` rejects every `submit`,
+  `cancel` and `replace` with `RejectReason::kNotConfigured`, before any
+  other check. The id carried by that reject follows the usual rule
+  (`new_order_id` for replace), and no `order_id` is consumed. This is the
+  one exception to "validation order mirrors the enum order": the value is 7
+  because appending keeps the existing enum values stable.
 - `order_id` uniqueness is permanent and checked at the *uniqueness step*:
   an id is "spent" the moment it's found non-duplicate, even if a later
   validation step (quantity/TIF/tick/band) still rejects that submission.

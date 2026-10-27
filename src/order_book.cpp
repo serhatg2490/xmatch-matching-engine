@@ -17,7 +17,7 @@ void OrderBook::configure(InstrumentId instrument_id, Price reference_price, std
     LevelBitset bid_bitmap;
     LevelBitset ask_bitmap;
 
-    Price delta = (reference_price * static_cast<Price>(band_bps)) / 10000;
+    Price delta = (reference_price * static_cast<Price>(band_bps)) / kBpsPerUnit;
     Price raw_lo = reference_price - delta;
     Price raw_hi = reference_price + delta;
     if (raw_lo < 1) raw_lo = 1; // safety floor; band is normally well above zero

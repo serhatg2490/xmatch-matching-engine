@@ -1,6 +1,8 @@
 #include "engine/engine.hpp"
 
 #include <algorithm>
+#include <limits>
+#include <new>
 #include <type_traits>
 #include <utility>
 
@@ -18,26 +20,38 @@ constexpr std::size_t kDefaultOrderCapacity = 1u << 24; // ~16.7M slots
 
 Engine::Engine(IEventListener* listener) : listener_(listener) {}
 
-void Engine::configure(const InstrumentConfig* instruments, std::size_t count) {
+ConfigureResult Engine::configure(const InstrumentConfig* instruments, std::size_t count) {
     try {
         // If the engine is already configured, do not configure it again.
         // If the configuration fails, the engine remains unconfigured and can be retried.
-        if (configured_) return;
+        if (configured_) return ConfigureResult::kAlreadyConfigured;
+
+        // Validate the input parameters before proceeding with configuration.
+        if (!instruments || count == 0 || count > UINT32_MAX) {
+            return ConfigureResult::kInvalidArgument;
+        }
 
         std::vector<OrderBook> books(count);
-
         FlatHashMap instrument_index;
         instrument_index.reserve(count);
 
         for (std::size_t i = 0; i < count; ++i) {
             const InstrumentConfig& cfg = instruments[i];
+            if (cfg.reference_price > std::numeric_limits<Price>::max() / kMaxBandBps ||
+                !is_tick_aligned(cfg.reference_price) ||
+                cfg.band_bps > kMaxBandBps)
+            {
+                return ConfigureResult::kInvalidArgument;
+            }
+            if (instrument_index.contains(cfg.instrument_id)) {
+                return ConfigureResult::kInvalidArgument; // duplicate instrument_id
+            }
             books[i].configure(cfg.instrument_id, cfg.reference_price, cfg.band_bps);
             instrument_index.insert(cfg.instrument_id, static_cast<std::uint32_t>(i));
         }
 
         OrderPool pool;
         pool.reserve(kDefaultOrderCapacity);
-
         FlatHashMap order_index;
         order_index.reserve(kDefaultOrderCapacity);
 
@@ -49,9 +63,15 @@ void Engine::configure(const InstrumentConfig* instruments, std::size_t count) {
         order_index_ = std::move(order_index);
 
         configured_ = true;
-    } catch (...) {
+        return ConfigureResult::kOk;
+    }
+    catch (const std::bad_alloc&) {
+        return ConfigureResult::kOutOfMemory;
+    } 
+    catch (...) {
         // Never let an exception cross the API boundary.
         // A failure here leaves the engine unconfigured.
+        return ConfigureResult::kInternalError;
     }
 }
 
@@ -123,6 +143,11 @@ bool Engine::can_fully_fill(const OrderBook& book, Side side, bool is_market,
 
 void Engine::submit(const NewOrder& order) {
     try {
+        if (!configured_) {
+            listener_->on_rejected(order.order_id, RejectReason::kNotConfigured);
+            return;
+        }
+
         OrderBook* book = find_book(order.instrument_id);
         if (!book) {
             listener_->on_rejected(order.order_id, RejectReason::kUnknownInstrument);
@@ -203,6 +228,11 @@ void Engine::submit(const NewOrder& order) {
 
 void Engine::cancel(const CancelOrder& request) {
     try {
+        if (!configured_) {
+            listener_->on_rejected(request.order_id, RejectReason::kNotConfigured);
+            return;
+        }
+
         std::uint32_t* slot_ptr = order_index_.find(request.order_id);
         if (!slot_ptr || !pool_[*slot_ptr].is_open) {
             listener_->on_rejected(request.order_id, RejectReason::kUnknownOrder);
@@ -220,6 +250,11 @@ void Engine::cancel(const CancelOrder& request) {
 
 void Engine::replace(const ReplaceOrder& request) {
     try {
+        if (!configured_) {
+            listener_->on_rejected(request.new_order_id, RejectReason::kNotConfigured);
+            return;
+        }
+
         std::uint32_t* old_slot_ptr = order_index_.find(request.order_id);
         if (!old_slot_ptr || !pool_[*old_slot_ptr].is_open) {
             listener_->on_rejected(request.new_order_id, RejectReason::kUnknownOrder);

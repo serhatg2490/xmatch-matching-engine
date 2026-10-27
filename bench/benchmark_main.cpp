@@ -103,7 +103,11 @@ int main(int argc, char** argv) {
         if (ref <= 0) ref = step;
         configs.push_back(InstrumentConfig{static_cast<InstrumentId>(i + 1), ref, 1000u});
     }
-    engine->configure(configs.data(), configs.size());
+    
+    if (engine->configure(configs.data(), configs.size()) != ConfigureResult::kOk) {
+        std::fprintf(stderr, "Engine configuration failed\n");
+        return 1;
+    }
 
     std::vector<Price> inst_tick(args.num_instruments);
     for (std::size_t i = 0; i < args.num_instruments; ++i) {

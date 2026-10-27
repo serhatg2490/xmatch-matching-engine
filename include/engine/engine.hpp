@@ -17,7 +17,7 @@ class Engine final : public IMatchingEngine {
 public:
     explicit Engine(IEventListener* listener);
 
-    void configure(const InstrumentConfig* instruments, std::size_t count) override;
+    ConfigureResult configure(const InstrumentConfig* instruments, std::size_t count) override;
     void submit(const NewOrder& order) override;
     void cancel(const CancelOrder& request) override;
     void replace(const ReplaceOrder& request) override;

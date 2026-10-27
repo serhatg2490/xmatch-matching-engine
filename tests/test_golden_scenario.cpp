@@ -20,7 +20,7 @@ TEST(GoldenScenario, FullSessionEventForEvent) {
     EngineHandle engine(&listener);
 
     InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
-    engine->configure(&cfg, 1);
+    ASSERT_EQ(engine->configure(&cfg, 1), ConfigureResult::kOk);
 
     // 1: submit id=1, Buy Limit Day, 25.10, 100 -> accepted(1)
     engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25, 1000), 100));

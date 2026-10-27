@@ -93,12 +93,19 @@ prose and the tests together.
   into locals and commits them with nothrow moves (`static_assert`ed for `OrderPool` and
   `FlatHashMap`), setting `configured_` last. A failed call leaves the engine unconfigured
   and may be retried; only the first *successful* call takes effect.
+- **`configure()` reports its outcome** as a `[[nodiscard]] ConfigureResult` (API v2).
+  All input validation (pointer, count, reference price, `band_bps`, duplicate ids) runs
+  before any book is built and returns `kInvalidArgument`; `bad_alloc` maps to
+  `kOutOfMemory`, any other exception to `kInternalError`.
 - **Integer price arithmetic only** — `Price` is `int64_t` at 1/10000 units. No `float`
-  or `double` anywhere near tick, band, or trade-price math.
+  or `double` anywhere near tick, band, or trade-price math. The band divisor is
+  `kBpsPerUnit`, never `kPriceScale` — equal today, unrelated in meaning.
 - **Pool slots are never recycled and `FlatHashMap` never erases.** `order_id` is unique
   for the engine's lifetime, so `replace()` allocates a *fresh* slot for `new_order_id`
   rather than renaming the old record.
-- **Validation order is fixed** and mirrors the `RejectReason` enum order. An `order_id`
+- **Validation order is fixed** and mirrors the `RejectReason` enum order, except
+  `kNotConfigured` (value 7, appended for ABI stability), which is always checked first
+  and consumes no id. An `order_id`
   is consumed at the uniqueness step — it stays spent even if a later step rejects the
   submission.
 - **`replace()` re-validates tick/band before registering `new_order_id` or allocating**,
@@ -130,7 +137,8 @@ the core so no test binary can carry its own `xmatch_create` and shadow the `.so
 `test_golden_scenario.cpp` asserts one end-to-end run event-for-event against an exact
 expected vector; it is the regression net for event ordering and replace semantics, so
 expect it to fail first when either changes. New behaviour that the API header describes
-should also get a targeted test in the matching/validation/cancel-replace file it belongs to.
+should also get a targeted test in the matching/validation/cancel-replace/configure file it
+belongs to.
 
 ## Scope
 

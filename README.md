@@ -26,6 +26,9 @@ purpose-built open-addressing id index.
   at the same price keeps its place.
 - A tick-size ladder (coarser ticks at higher prices) and a daily price band
   derived from a reference price, both enforced on entry and on replace.
+- Validated, retryable configuration: `configure()` returns a
+  `ConfigureResult`, rejects bad instrument setups up front, and an engine
+  that has not been configured rejects every order with `kNotConfigured`.
 - Fixed-point prices throughout; no floating-point price arithmetic anywhere.
 - Deterministic: the same configuration and operation sequence always
   produces the same event stream.
@@ -68,7 +71,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_BUILD_TESTS=OFF -DENGINE_BUIL
 
 The public API is [`include/xmatch/matching_engine_api.hpp`](include/xmatch/matching_engine_api.hpp).
 Implement `IEventListener`, create an engine, declare your instruments once,
-then submit:
+check that configuration succeeded, then submit:
 
 ```cpp
 #include "xmatch/matching_engine_api.hpp"
@@ -90,7 +93,9 @@ IMatchingEngine* engine = xmatch_create(&listener);
 InstrumentConfig cfg{.instrument_id = 1,
                      .reference_price = 250000, // 25.0000
                      .band_bps = 1000};         // +/- 10%
-engine->configure(&cfg, 1);
+if (engine->configure(&cfg, 1) != ConfigureResult::kOk) {
+    // nothing was applied; fix the configuration and call configure() again
+}
 
 engine->submit(NewOrder{.order_id = 1,
                         .instrument_id = 1,
@@ -112,8 +117,9 @@ cmake --build build -j
 ctest --test-dir build         # or both at once
 ```
 
-54 tests across 10 suites: an end-to-end golden scenario asserted event for
-event (`test_golden_scenario.cpp`), validation ordering and reject reasons,
+60 tests across 11 suites: an end-to-end golden scenario asserted event for
+event (`test_golden_scenario.cpp`), configuration validation and the
+unconfigured-engine behaviour, validation ordering and reject reasons,
 matching/priority/TIF semantics, cancel/replace edge cases (priority
 retention, replace-to-zero, tick/band re-validation, duplicate and self
 `new_order_id`), multi-instrument isolation at 150 instruments, and focused

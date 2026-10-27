@@ -18,7 +18,8 @@ TEST(MultiInstrumentTest, OrdersOnOneInstrumentDoNotAffectAnother) {
         InstrumentConfig{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000},
         InstrumentConfig{.instrument_id = 2, .reference_price = Px(60), .band_bps = 1000},
     };
-    engine->configure(cfgs.data(), cfgs.size());
+
+    ASSERT_EQ(engine->configure(cfgs.data(), cfgs.size()), ConfigureResult::kOk);
 
     engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25, 1000), 10));
     engine->submit(MakeLimit(2, 2, Side::kBuy, TimeInForce::kDay, Px(60), 20));
@@ -44,7 +45,7 @@ TEST(MultiInstrumentTest, DifferentTickRegimesGetDifferentBands) {
     std::vector<InstrumentConfig> cfgs = {
         InstrumentConfig{.instrument_id = 3, .reference_price = Px(120), .band_bps = 1000},
     };
-    engine->configure(cfgs.data(), cfgs.size());
+    ASSERT_EQ(engine->configure(cfgs.data(), cfgs.size()), ConfigureResult::kOk);
 
     // 108.05 is not a multiple of 0.10 -> invalid tick.
     engine->submit(MakeLimit(1, 3, Side::kBuy, TimeInForce::kDay, Px(108, 500), 10));
@@ -73,7 +74,7 @@ TEST(MultiInstrumentTest, HundredPlusInstrumentsEachIndependentlyCorrect) {
                                          .reference_price = Px(10 + i),
                                          .band_bps = 1000});
     }
-    engine->configure(cfgs.data(), cfgs.size());
+    ASSERT_EQ(engine->configure(cfgs.data(), cfgs.size()), ConfigureResult::kOk);
 
     OrderId next_id = 1;
     for (int i = 0; i < kCount; ++i) {
@@ -95,58 +96,11 @@ TEST(MultiInstrumentTest, TopOfBookOnUnconfiguredInstrumentIsSafelyEmpty) {
     RecordingListener listener;
     EngineHandle engine(&listener);
     InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
-    engine->configure(&cfg, 1);
+    ASSERT_EQ(engine->configure(&cfg, 1), ConfigureResult::kOk);
 
     TopOfBook tob = engine->top_of_book(42);
     EXPECT_EQ(tob.bid_quantity, 0u);
     EXPECT_EQ(tob.ask_quantity, 0u);
-}
-
-TEST(MultiInstrumentTest, ConfigureAfterFirstSuccessfulConfigureIsIgnored) {
-    RecordingListener listener;
-    EngineHandle engine(&listener);
-    InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
-    engine->configure(&cfg, 1);
-    engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10));
-
-    InstrumentConfig other{.instrument_id = 2, .reference_price = Px(60), .band_bps = 1000};
-    engine->configure(&cfg, 1);
-    engine->configure(&other, 1);
-
-    // The resting order survives, stays cancelable, and the book stays consistent.
-    TopOfBook tob = engine->top_of_book(1);
-    EXPECT_EQ(tob.bid_price, Px(25));
-    EXPECT_EQ(tob.bid_quantity, 10u);
-
-    listener.events.clear();
-    engine->cancel(CancelOrder{.order_id = 1});
-    engine->submit(MakeLimit(2, 1, Side::kBuy, TimeInForce::kDay, Px(25), 5));
-    engine->submit(MakeLimit(3, 2, Side::kBuy, TimeInForce::kDay, Px(60), 5));
-    ASSERT_EQ(listener.events.size(), 3u);
-    EXPECT_EQ(listener.events[0], Canceled(1, 10, CancelReason::kUserRequested));
-    EXPECT_EQ(listener.events[1], Accepted(2));
-    EXPECT_EQ(listener.events[2], Rejected(3, RejectReason::kUnknownInstrument));
-    EXPECT_EQ(engine->top_of_book(1).bid_quantity, 5u);
-}
-
-TEST(MultiInstrumentTest, CanBeConfiguredAfterFirstConfigureFails) {
-    RecordingListener listener;
-    EngineHandle engine(&listener);
-    InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
-    // Configuring with a null pointer and SIZE_MAX throws length_error
-    // which is caught and ignored, so the engine is left unconfigured.
-    engine->configure(nullptr, SIZE_MAX);
-    // Now configure with a proper instrument, which should succeed 
-    // and leave the engine usable.
-    engine->configure(&cfg, 1);
-    engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10));
-
-    // There is one resting order on instrument 1, and the book is consistent.
-    TopOfBook tob = engine->top_of_book(1);
-    EXPECT_EQ(tob.bid_price, Px(25));
-    EXPECT_EQ(tob.bid_quantity, 10u);
-    ASSERT_EQ(listener.events.size(), 1u);
-    EXPECT_EQ(listener.events[0], Accepted(1));
 }
 
 } // namespace

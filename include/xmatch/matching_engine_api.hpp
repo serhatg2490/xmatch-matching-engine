@@ -1,7 +1,7 @@
 // ============================================================================
 //  xmatch — public API for the matching engine shared library
 //  File: xmatch/matching_engine_api.hpp
-//  API version: 1
+//  API version: 2
 //
 //  Copyright (c) 2025 Serhat Gul. Released under the MIT License; see LICENSE.
 //
@@ -54,8 +54,10 @@ using OrderId = std::uint64_t;  // assigned by the caller, unique per engine
 using TradeId = std::uint64_t;  // assigned by the engine, 1, 2, 3, ...
 using InstrumentId = std::uint32_t;
 
-inline constexpr std::uint32_t kApiVersion = 1;
+inline constexpr std::uint32_t kApiVersion = 2;
 inline constexpr Price kPriceScale = 10000; // price units per 1.00
+inline constexpr std::uint32_t kBpsPerUnit = 10000; // basis points in 1.0 (100%)
+inline constexpr std::uint32_t kMaxBandBps = kBpsPerUnit; // widest band configure() accepts (100%)
 
 enum class Side : std::uint8_t {
     kBuy = 0,
@@ -83,6 +85,7 @@ enum class RejectReason : std::uint8_t {
     kPriceOutOfBand = 4,     // price falls outside the instrument's daily band
     kInvalidTimeInForce = 5, // e.g. a market order with tif == kDay
     kUnknownOrder = 6,       // no open order with the given id
+    kNotConfigured = 7,      // Always checked first despite being last in the list
 };
 
 // Why an order, or what was left of it, left the book.
@@ -91,6 +94,18 @@ enum class CancelReason : std::uint8_t {
     kIocRemainder = 1,  // the part of an IOC order that found no counterparty
     kFokUnfillable = 2, // an FOK order that could not fill in full; no trades
     kNoLiquidity = 3,   // a market order ran out of book on the opposite side
+};
+
+enum class ConfigureResult : std::uint8_t {
+    kOk = 0,                 // configuration succeeded and the engine is now usable
+    kAlreadyConfigured = 1,  // the engine was already configured; this call is ignored
+    kInvalidArgument = 2,    // 1) nullptr instruments pointer 
+                             // 2) duplicate instrument id 
+                             // 3) reference price not tick-aligned or > INT64_MAX / kMaxBandBps
+                             // 4) band_bps > kMaxBandBps
+                             // 5) count == 0 or count > UINT32_MAX
+    kOutOfMemory = 3,        // the engine could not allocate enough memory for the requested instruments
+    kInternalError = 4,      // an unexpected exception was thrown during configuration; the engine is left unconfigured
 };
 
 // ---------------------------------------------------------------------------
@@ -208,7 +223,14 @@ public:
     // and leaves the configured instruments and the book untouched.
     // A call that fails has no effect, so the engine stays unconfigured and
     // configure() may be called again.
-    virtual void configure(const InstrumentConfig* instruments,
+    // Results in kInvalidArgument in case of:
+        // 1) nullptr instruments pointer 
+        // 2) duplicate instrument id 
+        // 3) reference price not tick-aligned or > INT64_MAX / kMaxBandBps
+        // 4) band_bps > kMaxBandBps
+        // 5) count == 0 or count > UINT32_MAX
+    // Unconfigured engine rejects all order submissions with RejectReason::kNotConfigured.
+    [[nodiscard]] virtual ConfigureResult configure(const InstrumentConfig* instruments,
                            std::size_t count) = 0;
 
     // Continuous-session order entry, matched on price then time: the better

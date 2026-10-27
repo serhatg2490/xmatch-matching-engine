@@ -103,6 +103,7 @@ if(ENGINE_BUILD_TESTS)
     tests/test_matching.cpp
     tests/test_cancel_replace.cpp
     tests/test_multi_instrument.cpp
+    tests/test_configure.cpp
   )
   target_link_libraries(engine_api_tests PRIVATE matching_engine gtest_main)
   gtest_discover_tests(engine_api_tests)
