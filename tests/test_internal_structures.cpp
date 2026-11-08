@@ -51,7 +51,7 @@ TEST(TickTable, CeilAndFloorToTick) {
 
 TEST(PriceLadderTest, RoundTripWithinSingleRegime) {
     PriceLadder ladder;
-    ladder.build(225000, 275000); // instrument 1's band from the golden scenario
+    ladder.build(225000, 275000); // 25.00 reference, +/-10% band
     ASSERT_GT(ladder.size(), 0u);
     for (Price p = 225000; p <= 275000; p += 200) {
         auto idx = ladder.price_to_index(p);

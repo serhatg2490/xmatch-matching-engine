@@ -149,8 +149,8 @@ readings this engine commits to, and the tests pin each of them down.
 - `replace()`'s "quantity increase" (which loses priority) is judged
   against the order's *current open quantity*, not its original submitted
   quantity — this is the reading under which a partially filled order being
-  resized behaves unsurprisingly, and it is what the golden scenario's
-  step 6 locks in.
+  resized behaves unsurprisingly, and it is what the session scenario's
+  step 5 locks in.
 - A quantity-only replace can never newly cross the book: the resting-order
   invariant (best bid < best ask) was already intact at the unchanged
   price, so matching is only attempted when the price actually changes.

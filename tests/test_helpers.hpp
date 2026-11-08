@@ -13,7 +13,7 @@ namespace xmatch::test {
 // Fixed-point helper: TRY with up to 4 decimals -> Price (1/10000 TRY).
 constexpr Price try_price(std::int64_t whole_x10000) { return whole_x10000; }
 // e.g. Px(25, 1000) == 25.1000 TRY == 251000. Kept explicit/verbose on
-// purpose in the golden-scenario test so each price literal stays readable
+// purpose in the session-scenario test so each price literal stays readable
 // at a glance.
 constexpr Price Px(std::int64_t major, std::int64_t minor4 = 0) {
     return major * 10000 + minor4;

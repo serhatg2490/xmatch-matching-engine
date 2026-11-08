@@ -98,7 +98,7 @@ if(ENGINE_BUILD_TESTS)
   # Public-API tests: link only the shipped .so, so they exercise exactly
   # what a host program loads.
   add_executable(engine_api_tests
-    tests/test_golden_scenario.cpp
+    tests/test_session_scenario.cpp
     tests/test_validation.cpp
     tests/test_matching.cpp
     tests/test_cancel_replace.cpp

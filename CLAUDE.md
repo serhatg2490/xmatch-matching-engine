@@ -27,7 +27,7 @@ cmake --build build -j
 ./build/engine_api_tests    # public-API suite (links the .so)
 ./build/engine_internal_tests    # detail:: building blocks (links the core)
 ./build/engine_api_tests --gtest_filter='CancelReplaceTest.*'   # one suite
-./build/engine_api_tests --gtest_filter='GoldenScenario.*'    # one test
+./build/engine_api_tests --gtest_filter='SessionScenario.*'    # one test
 ctest --test-dir build    # both binaries via gtest_discover_tests
 
 ./build/engine_bench [num_ops] [num_instruments] [warmup_ops] [seed]   # defaults 10000000 120 500000 42
@@ -134,7 +134,7 @@ are exported), so the tests are split: `engine_api_tests` links only the `.so`, 
 except `engine_api.cpp`, which the `.so` is also built from. Keep `engine_api.cpp` out of
 the core so no test binary can carry its own `xmatch_create` and shadow the `.so`'s.
 
-`test_golden_scenario.cpp` asserts one end-to-end run event-for-event against an exact
+`test_session_scenario.cpp` asserts one end-to-end run event-for-event against an exact
 expected vector; it is the regression net for event ordering and replace semantics, so
 expect it to fail first when either changes. New behaviour that the API header describes
 should also get a targeted test in the matching/validation/cancel-replace/configure file it

@@ -70,6 +70,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_BUILD_TESTS=OFF -DENGINE_BUIL
 ## Usage
 
 The public API is [`include/xmatch/matching_engine_api.hpp`](include/xmatch/matching_engine_api.hpp).
+The public API began as the interface of a take-home exercise and has since been reworked (v2).
 Implement `IEventListener`, create an engine, declare your instruments once,
 check that configuration succeeded, then submit:
 
@@ -117,8 +118,8 @@ cmake --build build -j
 ctest --test-dir build         # or both at once
 ```
 
-60 tests across 11 suites: an end-to-end golden scenario asserted event for
-event (`test_golden_scenario.cpp`), configuration validation and the
+60 tests across 11 suites: an end-to-end session scenario asserted event for
+event (`test_session_scenario.cpp`), configuration validation and the
 unconfigured-engine behaviour, validation ordering and reject reasons,
 matching/priority/TIF semantics, cancel/replace edge cases (priority
 retention, replace-to-zero, tick/band re-validation, duplicate and self
@@ -150,7 +151,7 @@ include/xmatch/           public API header (the C ABI and event contract)
 include/engine/           internal headers (hash map, order pool, tick
                            table, price ladder, order book, engine)
 src/                      implementation + the extern "C" factory functions
-tests/                    GoogleTest suite, including the golden scenario
+tests/                    GoogleTest suite, including the session scenario
 bench/                    standalone latency/throughput benchmark
 ```
 
