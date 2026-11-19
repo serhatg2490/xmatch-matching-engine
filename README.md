@@ -70,7 +70,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_BUILD_TESTS=OFF -DENGINE_BUIL
 ## Usage
 
 The public API is [`include/xmatch/matching_engine_api.hpp`](include/xmatch/matching_engine_api.hpp).
-The public API began as the interface of a take-home exercise and has since been reworked (v2).
+The public API began as the interface of a take-home exercise and has since been reworked (v3).
 Implement `IEventListener`, create an engine, declare your instruments once,
 check that configuration succeeded, then submit:
 
@@ -80,12 +80,12 @@ check that configuration succeeded, then submit:
 using namespace xmatch;
 
 struct MyListener final : IEventListener {
-    void on_accepted(OrderId) override {}
-    void on_rejected(OrderId, RejectReason) override {}
+    void on_accepted(OrderId) noexcept override {}
+    void on_rejected(OrderId, RejectReason) noexcept override {}
     void on_trade(TradeId, InstrumentId, Price, Quantity,
-                  OrderId, OrderId, Side) override {}
-    void on_canceled(OrderId, Quantity, CancelReason) override {}
-    void on_replaced(OrderId, OrderId, Price, Quantity) override {}
+                  OrderId, OrderId, Side) noexcept override {}
+    void on_canceled(OrderId, Quantity, CancelReason) noexcept override {}
+    void on_replaced(OrderId, OrderId, Price, Quantity) noexcept override {}
 };
 
 MyListener listener;

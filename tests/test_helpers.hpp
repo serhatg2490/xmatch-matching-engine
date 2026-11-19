@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "xmatch/matching_engine_api.hpp"
@@ -83,14 +84,14 @@ public:
     std::vector<RecordedEvent> events;
     TradeId next_expected_trade_id = 1;
 
-    void on_accepted(OrderId order_id) override {
+    void on_accepted(OrderId order_id) noexcept override {
         events.push_back(RecordedEvent{.kind = EventKind::kAccepted, .order_id = order_id});
     }
-    void on_rejected(OrderId order_id, RejectReason reason) override {
+    void on_rejected(OrderId order_id, RejectReason reason) noexcept override {
         events.push_back(RecordedEvent{.kind = EventKind::kRejected, .order_id = order_id, .reject_reason = reason});
     }
     void on_trade(TradeId trade_id, InstrumentId instrument_id, Price price, Quantity quantity,
-                  OrderId resting_order_id, OrderId aggressive_order_id, Side aggressor_side) override {
+                  OrderId resting_order_id, OrderId aggressive_order_id, Side aggressor_side) noexcept override {
         EXPECT_EQ(trade_id, next_expected_trade_id) << "trade ids must start at 1 and increment by 1";
         ++next_expected_trade_id;
         events.push_back(RecordedEvent{.kind = EventKind::kTrade,
@@ -102,14 +103,14 @@ public:
                                         .aggressive_order_id = aggressive_order_id,
                                         .aggressor_side = aggressor_side});
     }
-    void on_canceled(OrderId order_id, Quantity canceled_quantity, CancelReason reason) override {
+    void on_canceled(OrderId order_id, Quantity canceled_quantity, CancelReason reason) noexcept override {
         events.push_back(RecordedEvent{.kind = EventKind::kCanceled,
                                         .order_id = order_id,
                                         .quantity = canceled_quantity,
                                         .cancel_reason = reason});
     }
     void on_replaced(OrderId old_order_id, OrderId new_order_id, Price new_price,
-                      Quantity new_open_quantity) override {
+                      Quantity new_open_quantity) noexcept override {
         events.push_back(RecordedEvent{.kind = EventKind::kReplaced,
                                         .order_id = old_order_id,
                                         .price = new_price,
@@ -117,6 +118,14 @@ public:
                                         .new_open_quantity = new_open_quantity});
     }
 };
+
+// Callback contract (API v3): every IEventListener method is noexcept.
+static_assert(noexcept(std::declval<IEventListener&>().on_accepted(OrderId{})));
+static_assert(noexcept(std::declval<IEventListener&>().on_rejected(OrderId{}, RejectReason{})));
+static_assert(noexcept(std::declval<IEventListener&>().on_trade(
+    TradeId{}, InstrumentId{}, Price{}, Quantity{}, OrderId{}, OrderId{}, Side{})));
+static_assert(noexcept(std::declval<IEventListener&>().on_canceled(OrderId{}, Quantity{}, CancelReason{})));
+static_assert(noexcept(std::declval<IEventListener&>().on_replaced(OrderId{}, OrderId{}, Price{}, Quantity{})));
 
 inline RecordedEvent Accepted(OrderId id) {
     return RecordedEvent{.kind = EventKind::kAccepted, .order_id = id};

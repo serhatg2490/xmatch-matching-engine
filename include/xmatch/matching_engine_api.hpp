@@ -1,7 +1,7 @@
 // ============================================================================
 //  xmatch — public API for the matching engine shared library
 //  File: xmatch/matching_engine_api.hpp
-//  API version: 2
+//  API version: 3
 //
 //  Copyright (c) 2025 Serhat Gul. Released under the MIT License; see LICENSE.
 //
@@ -25,6 +25,10 @@
 //    submit()/cancel()/replace() call returns. There is no queue and no
 //    deferred dispatch, so a caller can time an operation simply by wrapping
 //    the call.
+//
+//  Callback contract
+//    IEventListener methods are noexcept and must not throw; a throw calls
+//    std::terminate. Callbacks must not call back into the engine.
 //
 //  Determinism
 //    The same configure() followed by the same sequence of operations always
@@ -54,7 +58,7 @@ using OrderId = std::uint64_t;  // assigned by the caller, unique per engine
 using TradeId = std::uint64_t;  // assigned by the engine, 1, 2, 3, ...
 using InstrumentId = std::uint32_t;
 
-inline constexpr std::uint32_t kApiVersion = 2;
+inline constexpr std::uint32_t kApiVersion = 3;
 inline constexpr Price kPriceScale = 10000; // price units per 1.00
 inline constexpr std::uint32_t kBpsPerUnit = 10000; // basis points in 1.0 (100%)
 inline constexpr std::uint32_t kMaxBandBps = kBpsPerUnit; // widest band configure() accepts (100%)
@@ -173,6 +177,8 @@ struct TopOfBook {
 // For a new order that passes validation the engine emits on_accepted first,
 // then one on_trade per resting order it matched against, then, if anything is
 // left over and cannot rest, an on_canceled.
+//
+// All callbacks are noexcept; see "Callback contract" at the top of this file.
 // ---------------------------------------------------------------------------
 class IEventListener {
 public:
@@ -180,9 +186,9 @@ public:
 
     // The order passed validation and has entered the engine. This arrives
     // before any fills the order goes on to generate.
-    virtual void on_accepted(OrderId order_id) = 0;
+    virtual void on_accepted(OrderId order_id) noexcept = 0;
 
-    virtual void on_rejected(OrderId order_id, RejectReason reason) = 0;
+    virtual void on_rejected(OrderId order_id, RejectReason reason) noexcept = 0;
 
     // One execution against one resting order. An aggressive order that
     // sweeps several resting orders produces one of these per resting order,
@@ -194,20 +200,20 @@ public:
                           Quantity quantity,
                           OrderId resting_order_id,
                           OrderId aggressive_order_id,
-                          Side aggressor_side) = 0;
+                          Side aggressor_side) noexcept = 0;
 
     // The order, or the part of it that had not filled, is gone from the book
     // and will not trade again.
     virtual void on_canceled(OrderId order_id,
                              Quantity canceled_quantity,
-                             CancelReason reason) = 0;
+                             CancelReason reason) noexcept = 0;
 
     // A replace took effect. Delivered before any trades the repriced order
     // triggers.
     virtual void on_replaced(OrderId old_order_id,
                              OrderId new_order_id,
                              Price new_price,
-                             Quantity new_open_quantity) = 0;
+                             Quantity new_open_quantity) noexcept = 0;
 };
 
 // ---------------------------------------------------------------------------

@@ -89,6 +89,7 @@ prose and the tests together.
   success paths.** All large allocation belongs in `configure()`.
 - **No exception crosses the C ABI.** Every public `Engine` method body is wrapped in
   `try { ... } catch (...) {}`. This is the one place blanket catching is correct.
+- **Listener callbacks are `noexcept` (API v3).** A throwing listener calls `std::terminate`.
 - **`configure()` gives the strong exception guarantee.** It builds books, indexes and pool
   into locals and commits them with nothrow moves (`static_assert`ed for `OrderPool` and
   `FlatHashMap`), setting `configured_` last. A failed call leaves the engine unconfigured

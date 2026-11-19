@@ -88,6 +88,8 @@ inconvenience, so the type system rules it out.
   not a style choice. `configure()` is the one method that reports what it
   caught: `std::bad_alloc` becomes `ConfigureResult::kOutOfMemory`, anything
   else `kInternalError`.
+- `IEventListener` callbacks are `noexcept` (API v3): a throwing listener
+  hits `std::terminate` and never reaches the engine's `catch (...)`.
 - `configure()` validates every input before it builds anything (non-null
   pointer, `0 < count <= UINT32_MAX`, tick-aligned reference price no larger
   than `INT64_MAX / kMaxBandBps`, `band_bps <= kMaxBandBps`, unique

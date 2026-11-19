@@ -108,8 +108,6 @@ void Engine::run_matching(OrderBook& book, InstrumentId instrument_id,
 
             Quantity fill = std::min(agg.open_qty, resting.open_qty);
             TradeId trade_id = next_trade_id_++;
-            listener_->on_trade(trade_id, instrument_id, resting.price, fill,
-                                 resting.id, agg.id, side);
 
             agg.open_qty -= fill;
             agg.filled_qty += fill;
@@ -120,6 +118,9 @@ void Engine::run_matching(OrderBook& book, InstrumentId instrument_id,
             if (resting.open_qty == 0) {
                 book.remove_resting(pool_, resting_slot);
             }
+
+            listener_->on_trade(trade_id, instrument_id, resting.price, fill,
+                        resting.id, agg.id, side);
         }
     }
 }

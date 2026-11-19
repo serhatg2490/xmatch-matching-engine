@@ -28,11 +28,11 @@ namespace {
 
 struct NullListener final : IEventListener {
     std::uint64_t accepted = 0, rejected = 0, trades = 0, canceled = 0, replaced = 0;
-    void on_accepted(OrderId) override { ++accepted; }
-    void on_rejected(OrderId, RejectReason) override { ++rejected; }
-    void on_trade(TradeId, InstrumentId, Price, Quantity, OrderId, OrderId, Side) override { ++trades; }
-    void on_canceled(OrderId, Quantity, CancelReason) override { ++canceled; }
-    void on_replaced(OrderId, OrderId, Price, Quantity) override { ++replaced; }
+    void on_accepted(OrderId) noexcept override { ++accepted; }
+    void on_rejected(OrderId, RejectReason) noexcept override { ++rejected; }
+    void on_trade(TradeId, InstrumentId, Price, Quantity, OrderId, OrderId, Side) noexcept override { ++trades; }
+    void on_canceled(OrderId, Quantity, CancelReason) noexcept override { ++canceled; }
+    void on_replaced(OrderId, OrderId, Price, Quantity) noexcept override { ++replaced; }
 };
 
 std::size_t current_rss_bytes() {
