@@ -12,18 +12,22 @@ namespace xmatch::detail {
 
 // A single price level's FIFO queue of resting orders (intrusive linked
 // list stored in the shared OrderPool) plus the aggregate quantity the
-// matching engine needs for O(1) top_of_book.
+// matching engine needs for O(1) top_of_book. A level is empty exactly when
+// head (and tail) is kInvalidSlot; no separate order count is kept, which is
+// what lets the 64-bit total below fit in 16 bytes.
 struct Level {
     std::uint32_t head = kInvalidSlot; // oldest (highest priority)
     std::uint32_t tail = kInvalidSlot; // newest
-    Quantity total_qty = 0;
-    std::uint32_t order_count = 0;
+    // Sum of open_qty over the level's orders. 64-bit because many uint32
+    // quantities share one level: at most kMaxOrderCapacity orders of
+    // UINT32_MAX each, which is < 2^64, so this can never wrap.
+    AggregateQuantity total_qty = 0;
 };
 
 // Two Level arrays are allocated per instrument, one per side, each as long
 // as the instrument's ladder -- so this size multiplies out across every
-// configured instrument. Keep it a tight 16 bytes (four 4-byte fields, no
-// padding) rather than letting a field widen unnoticed.
+// configured instrument. Keep it a tight 16 bytes (two 4-byte links and one
+// 8-byte total, no padding) rather than letting a field widen unnoticed.
 static_assert(sizeof(Level) == 16, "Level must stay 16 bytes: it is allocated per price level, per side");
 
 // Per-instrument order book. Price levels live in flat arrays indexed via
@@ -86,9 +90,9 @@ public:
     // priority is retained (same price, quantity unchanged or decreased).
     // `old_slot` must currently be resting; `new_slot` must not be, and
     // must already carry the side/price/open_qty it will rest with. The
-    // level's aggregate quantity is adjusted by the qty delta; order_count,
-    // the bitmap, and the best-index cache are untouched (the level stays
-    // non-empty throughout).
+    // level's aggregate quantity is adjusted by the qty delta; the bitmap
+    // and the best-index cache are untouched (the level stays non-empty
+    // throughout).
     void replace_in_place(OrderPool& pool, std::uint32_t old_slot, std::uint32_t new_slot) noexcept;
 
 private:

@@ -40,10 +40,11 @@ ConfigureResult Engine::configure(const InstrumentConfig* instruments, std::size
             return ConfigureResult::kInvalidArgument;
         }
 
-        std::vector<OrderBook> books(count);
         FlatHashMap instrument_index;
         instrument_index.reserve(count);
 
+        // Validate every instrument before building any book, so a bad entry
+        // late in the array costs nothing for the books ahead of it.
         for (std::size_t i = 0; i < count; ++i) {
             const InstrumentConfig& cfg = instruments[i];
             if (cfg.reference_price > std::numeric_limits<Price>::max() / kMaxBandBps ||
@@ -52,11 +53,22 @@ ConfigureResult Engine::configure(const InstrumentConfig* instruments, std::size
             {
                 return ConfigureResult::kInvalidArgument;
             }
+            // The limit is on the ladder's size, not on the price: the count
+            // comes from the same tick-table walk the book is built with.
+            const BandLimits band = band_limits(cfg.reference_price, cfg.band_bps);
+            if (price_level_count(band.lo, band.hi) > kMaxPriceLevels) {
+                return ConfigureResult::kInvalidArgument;
+            }
             if (instrument_index.contains(cfg.instrument_id)) {
                 return ConfigureResult::kInvalidArgument; // duplicate instrument_id
             }
-            books[i].configure(cfg.instrument_id, cfg.reference_price, cfg.band_bps);
             instrument_index.insert(cfg.instrument_id, static_cast<std::uint32_t>(i));
+        }
+
+        std::vector<OrderBook> books(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            const InstrumentConfig& cfg = instruments[i];
+            books[i].configure(cfg.instrument_id, cfg.reference_price, cfg.band_bps);
         }
 
         // Everything the order-entry path will ever need, allocated now: the
@@ -141,7 +153,8 @@ bool Engine::can_fully_fill(const OrderBook& book, Side side, bool is_market,
     Side opp_side = (side == Side::kBuy) ? Side::kSell : Side::kBuy;
     if (!book.has_best(opp_side)) return false;
 
-    Quantity available = 0;
+    // 64-bit: summing several levels' totals can exceed any single Quantity.
+    AggregateQuantity available = 0;
     std::int64_t idx = book.best_index(opp_side);
     while (idx >= 0) {
         Price resting_price = book.index_to_price(static_cast<std::uint32_t>(idx));

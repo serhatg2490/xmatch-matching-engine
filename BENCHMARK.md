@@ -1,97 +1,68 @@
 # BENCHMARK.md
 
-## Hardware / environment
+## Environment
 
 - CPU: Intel Core Ultra 5 125H (hybrid P+E cores), 18 logical CPUs, up to 4.5 GHz.
-- RAM: 16 GB.
+- RAM: 16 GB. On AC power.
 - OS: Linux 7.0 (Ubuntu 24.04 userspace), GCC 13.3, `-O3 -DNDEBUG`, C++20.
-- This is a shared development sandbox, **not** an isolated benchmarking
-  box: no `isolcpus`/`nohz_full`, no real-time scheduling available
-  (`chrt -f` fails with `EPERM`), frequency scaling active. Runs were
-  pinned to one core with `taskset -c 4` but still share that core's
-  scheduling with the rest of the host. See "On the `max` outlier" below —
-  this materially affects only the `max` column, not p50–p99.9.
+- A shared development machine, not an isolated benchmark box: no
+  `isolcpus`/`nohz_full`, no real-time scheduling, frequency scaling on.
+  Runs are pinned with `taskset -c 4`. This mainly affects the `max` column.
 
 ## Method
 
-`bench/benchmark_main.cpp` (see `README.md` for how to run it): configures
-120 instruments with reference prices spread 5–480 TRY (so multiple tick
-regimes are exercised), then runs a `std::mt19937_64`-seeded, deterministic
-mix of operations — 55% new Day limit
-orders (priced close to each instrument's reference, so most rest instead
-of crossing), 25% cancels, 10% replaces, and a 10% bucket split across
-aggressive Limit IOC, Market IOC, Limit FOK, and Market FOK (priced to
-reliably cross). 500,000 warm-up ops run untimed first; each subsequent
-`submit`/`cancel`/`replace` call is timed individually with
-`std::chrono::steady_clock` around just that call, single-threaded.
+`bench/benchmark_main.cpp` configures 120 instruments with reference prices
+spread over 5–480, so several tick regimes are used. It then runs a seeded
+(`std::mt19937_64`), deterministic mix:
 
-10,000,000 timed ops per run, three different seeds, all pinned to core 4:
+- 55% new Day limit orders, priced near the reference so most rest
+- 25% cancels
+- 10% replaces
+- 10% aggressive Limit IOC, Market IOC, Limit FOK and Market FOK
+
+500,000 warm-up ops run untimed. Each of the 10,000,000 timed ops is one
+`submit`/`cancel`/`replace` call, timed on its own with
+`std::chrono::steady_clock`, single-threaded.
+
+## Results
 
 | seed | p50 (ns) | p90 (ns) | p99 (ns) | p99.9 (ns) | max (ns) | throughput (ops/s) |
 |---|---|---|---|---|---|---|
-| 42  | 234 | 433 | 636 | 884 | 101,157 | 2,574,710 |
-| 123 | 235 | 434 | 643 | 894 | 20,746 | 2,568,899 |
-| 777 | 233 | 431 | 628 | 872 | 31,539 | 2,590,737 |
+| 42  | 235 | 438 | 658 | 909 | 30,601 | 2,542,394 |
+| 123 | 234 | 435 | 644 | 887 | 62,728 | 2,561,172 |
+| 777 | 234 | 434 | 639 | 886 | 27,189 | 2,562,682 |
 
-The benchmark passes `max_orders = warmup_ops + num_ops` (10.5M here) to
-`configure()`: every op records at most one order id, so the run can never
-hit `kCapacityExceeded`, and nothing beyond that is reserved. RSS was flat
-across every run: ~899 MB before the timed loop and ~899 MB after, since the
-pool and id index never grow after `configure()` (see `DESIGN.md`).
-
-Earlier builds reserved a fixed 2²⁴ (~16.7M) orders, for ~1442 MB RSS.
-Measured back to back on the same core, sizing the reserve to the workload
-left p50 unchanged and improved p99/p99.9 by a few percent and throughput by
-~2–4% across three seeds. The likely cause is a smaller working set (less
-TLB/cache pressure); the id index fills further, but the ids actually
-recorded stay well below 10.5M, so probe chains stay short.
-
-Event mix actually exercised (seed 42): 6.81M accepted, 1.78M rejected
-(mostly `kUnknownOrder` from the generator's own simplified id bookkeeping —
-see "Workload generator limitations" below), 2.18M trades, 1.82M canceled,
-88.7K replaced.
+- RSS is ~899 MB before and after the timed loop. The benchmark passes
+  `max_orders = warmup_ops + num_ops` (10.5M) to `configure()`, which
+  reserves the pool and id index once; nothing grows afterwards.
+- Event mix (seed 42): 6.81M accepted, 1.78M rejected, 2.18M trades, 1.82M
+  canceled, 88.7K replaced.
 
 ## Interpretation
 
-- **p50/p90/p99/p99.9 are stable and reproducible**: within a few
-  nanoseconds of each other across three different seeds. Median is
-  sub-microsecond (~233 ns) and p99.9 stays under 1 µs — comfortably
-  inside the sub-microsecond-median, single-digit-µs-p99 range this engine
-  was designed for. Throughput is consistently ~2.6M ops/sec
-  single-threaded.
-- **`max` is not reproducible run-to-run** (21 µs–417 µs observed across
-  otherwise-identical runs) and does not correlate with a specific op type
-  or workload phase. That signature — a handful of outliers 2–3 orders of
-  magnitude above p99.9, uncorrelated with input — is the fingerprint of
-  scheduler preemption on a shared, non-isolated core rather than anything
-  in the matching engine itself. A run on real isolated hardware —
-  single-threaded on a genuinely isolated core — would be needed to
-  separate genuine tail latency from host noise; this
-  environment can't produce that measurement honestly, so it's reported as
-  a limitation rather than papered over.
-- **Why the array/bitmap book pays off**: `top_of_book` and the level a
-  matching loop starts at are both O(1) by construction (`DESIGN.md`), so
-  the dominant per-op cost is the id-index hash lookup plus, for
-  order-crossing ops, however many resting orders actually fill — not book
-  navigation. That's consistent with p50/p90 being close together (most
-  ops are a single hash lookup + O(1) level touch) while p99/p99.9 pick up
-  the less common multi-level-crossing IOC/FOK/market fills.
+- **p50–p99.9 are stable**, within a few nanoseconds across seeds: ~234 ns
+  median, p99.9 under 1 µs, ~2.55M ops/sec on one core.
+- **`max` is not reproducible.** It changes run to run without tracking any
+  op type, which points to scheduler preemption on a non-isolated core, not
+  the engine. Measuring true tail latency needs an isolated core.
+- **Where the time goes.** Book navigation is O(1) (see `DESIGN.md`), so the
+  cost is mainly the id-index lookup plus however many resting orders a
+  crossing order fills. Most ops are one lookup and one level touch, which
+  keeps p50 and p90 close; p99 and above come from multi-level IOC/FOK/market
+  fills.
 
-## Workload generator limitations (affect the mix, not the engine)
+## Workload limitation
 
-The generator tracks "probably still open" order ids in a flat vector to
-pick realistic cancel/replace targets, but doesn't mirror the engine's
-fill bookkeeping (that would mean re-deriving the book inside the
-benchmark). This slightly overstates `kUnknownOrder` rejects and understates
-successful replace/cancel counts versus a real trading-day mix; it does not
-affect the timing methodology, since every op — successful or rejected —
-is a real, individually-timed `submit`/`cancel`/`replace` call through the
-public API.
+The generator keeps a simple list of "probably open" ids for cancel/replace
+targets and does not track fills. This inflates `kUnknownOrder` rejects
+(most of the rejects above) and lowers successful cancel/replace counts. It
+does not affect timing: every op, accepted or rejected, is a real public-API
+call.
 
 ## Reproducing
 
 ```sh
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_BUILD_BENCH=ON
+cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 taskset -c <idle-core> ./build/engine_bench 10000000 120 500000 42
 ```

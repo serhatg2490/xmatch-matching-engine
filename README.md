@@ -1,70 +1,50 @@
 # xmatch — a low-latency equity matching engine in C++20
 
 A single-threaded, price/time-priority matching engine for a continuous
-cash-equity trading session, built as a shared library (`libmatching_engine.so`)
-with a small C ABI so a host program can link it or `dlopen()` it.
+cash-equity session. It ships as a shared library (`libmatching_engine.so`)
+behind a three-symbol C ABI, so a host can link it or `dlopen()` it.
 
-The design goal was a sub-microsecond median `submit`/`cancel`/`replace`, with
-no heap allocation, syscalls, logging, or exceptions on the hot path. On a
-laptop-class x86-64 core it measures a ~233 ns median and a p99.9 under 1 µs at
-~2.6M ops/sec single-threaded — see [`BENCHMARK.md`](BENCHMARK.md) for the full
-numbers, the method, and an honest account of what this environment can and
-cannot measure.
+`submit`/`cancel`/`replace` do no heap allocation, syscalls, logging or
+exception handling. On a laptop-class x86-64 core they run at a ~234 ns
+median, p99.9 under 1 µs, ~2.55M ops/sec. See [`BENCHMARK.md`](BENCHMARK.md)
+for the method and numbers, and [`DESIGN.md`](DESIGN.md) for the data
+structures.
 
-See [`DESIGN.md`](DESIGN.md) for the data-structure rationale: an
-array-indexed price ladder bounded by the daily price band, a bitset for
-best-price relocation, an intrusive FIFO inside a chunked order pool, and a
-purpose-built open-addressing id index.
+## Features
 
-## Feature set
-
-- Continuous trading with price/time priority across many instruments
-  (tested at 150, benchmarked at 120).
+- Price/time priority across many instruments.
 - Limit and market orders; Day, IOC and FOK time-in-force.
-- Atomic cancel and replace, with correct time-priority semantics — a
-  reprice or size increase goes to the back of the queue, a size reduction
-  at the same price keeps its place.
-- A tick-size ladder (coarser ticks at higher prices) and a daily price band
-  derived from a reference price, both enforced on entry and on replace.
-- Validated, retryable configuration: `configure()` returns a
-  `ConfigureResult`, rejects bad instrument setups up front, and an engine
-  that has not been configured rejects every order with `kNotConfigured`.
-- Fixed order capacity: `configure()` takes `max_orders` and reserves memory
-  for all of them up front, so order entry never allocates; once the cap is
-  reached, new orders and replaces are rejected with `kCapacityExceeded`.
-- Fixed-point prices throughout; no floating-point price arithmetic anywhere.
-- Deterministic: the same configuration and operation sequence always
-  produces the same event stream.
-- Synchronous event delivery — every callback has fired before the
-  triggering call returns, which is what makes call-site latency
-  measurement meaningful.
+- Atomic cancel and replace. A reprice or size increase goes to the back of
+  the queue; a size reduction at the same price keeps its place.
+- Tick-size ladder and a daily price band around a reference price, enforced
+  on entry and on replace.
+- Validated, retryable `configure()` that returns a `ConfigureResult`. An
+  unconfigured engine rejects every order with `kNotConfigured`.
+- Fixed order capacity: memory for `max_orders` is reserved up front; once
+  it is used up, orders are rejected with `kCapacityExceeded`.
+- Overflow-safe sizes: a band spans at most `kMaxPriceLevels` (2²⁴) price
+  levels, and aggregate quantities are 64-bit (`AggregateQuantity`).
+- Integer fixed-point prices; no floating point in price math.
+- Deterministic: the same inputs always produce the same event stream.
+- Synchronous events: every callback fires before the triggering call
+  returns.
 
-Deliberately out of scope: opening/closing auctions, circuit breakers,
-self-trade prevention, accounts and positions, persistence, and networking.
+Out of scope: auctions, circuit breakers, self-trade prevention,
+accounts/positions, persistence, networking, multithreading.
 
 ## Build
 
-Requires CMake >= 3.20 and GCC >= 12 or Clang >= 15 on Linux x86-64.
+Requires CMake ≥ 3.20 and GCC ≥ 12 or Clang ≥ 15 on Linux x86-64.
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-This produces `build/libmatching_engine.so`, exporting exactly three C
-symbols:
-
-```sh
-nm -D build/libmatching_engine.so | grep " T xmatch"
-# xmatch_api_version
-# xmatch_create
-# xmatch_destroy
-```
-
-The engine itself has no dependencies beyond the standard library.
-`ENGINE_BUILD_TESTS` (default `ON`) fetches GoogleTest via CMake
-`FetchContent` on first configure (needs network access once); set it to
-`OFF` to build only the shared library:
+This builds `build/libmatching_engine.so`, which exports only
+`xmatch_api_version`, `xmatch_create` and `xmatch_destroy`. The engine uses
+only the standard library. Tests fetch GoogleTest via `FetchContent` (network
+needed once). To build just the library:
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_BUILD_TESTS=OFF -DENGINE_BUILD_BENCH=OFF
@@ -72,10 +52,9 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_BUILD_TESTS=OFF -DENGINE_BUIL
 
 ## Usage
 
-The public API is [`include/xmatch/matching_engine_api.hpp`](include/xmatch/matching_engine_api.hpp).
-The public API began as the interface of a take-home exercise and has since been reworked (v4).
-Implement `IEventListener`, create an engine, declare your instruments once,
-check that configuration succeeded, then submit:
+The whole public API (version 5) is
+[`include/xmatch/matching_engine_api.hpp`](include/xmatch/matching_engine_api.hpp);
+its comments are the specification.
 
 ```cpp
 #include "xmatch/matching_engine_api.hpp"
@@ -112,62 +91,45 @@ engine->submit(NewOrder{.order_id = 1,
 xmatch_destroy(engine);
 ```
 
-## Run the tests
+## Tests
 
 ```sh
-cmake --build build -j
 ./build/engine_api_tests       # public API, through libmatching_engine.so
 ./build/engine_internal_tests  # internal building blocks
-ctest --test-dir build         # or both at once
+ctest --test-dir build         # both
 ```
 
-60 tests across 11 suites: an end-to-end session scenario asserted event for
-event (`test_session_scenario.cpp`), configuration validation and the
-unconfigured-engine behaviour, validation ordering and reject reasons,
-matching/priority/TIF semantics, cancel/replace edge cases (priority
-retention, replace-to-zero, tick/band re-validation, duplicate and self
-`new_order_id`), multi-instrument isolation at 150 instruments, and focused
-unit tests for the internal building blocks (hash map, order pool, price
-ladder, tick table, level bitset).
+They cover an end-to-end session asserted event for event, configuration
+validation, reject reasons and their order, matching and TIF semantics,
+cancel/replace edge cases, multi-instrument isolation, overflow limits, and
+the internal building blocks.
 
-## Run the benchmark
+## Benchmark
 
 ```sh
-./build/engine_bench [num_ops] [num_instruments] [warmup_ops] [seed]
-# defaults:   10000000        120               500000       42
+taskset -c 4 ./build/engine_bench [num_ops] [num_instruments] [warmup_ops] [seed]
+# defaults:                        10000000  120               500000       42
 ```
 
-Drives 100+ instruments with a deterministic seeded mix (~55% new limit /
-25% cancel / 10% replace / 10% marketable IOC/FOK/market flow), times every
-`submit`/`cancel`/`replace` call individually, and prints p50/p90/p99/p99.9/max
-latency, throughput, and RSS. For best results, pin it to an otherwise-idle
-core:
+Runs a seeded mix of new orders, cancels, replaces and aggressive IOC/FOK/
+market orders, times every call, and prints latency percentiles, throughput
+and RSS. Pin it to an idle core.
 
-```sh
-taskset -c 4 ./build/engine_bench
-```
-
-## Repository layout
+## Layout
 
 ```
-include/xmatch/           public API header (the C ABI and event contract)
-include/engine/           internal headers (hash map, order pool, tick
-                           table, price ladder, order book, engine)
-src/                      implementation + the extern "C" factory functions
-tests/                    GoogleTest suite, including the session scenario
-bench/                    standalone latency/throughput benchmark
+include/xmatch/   public API header
+include/engine/   internal headers (tick table, price ladder, order book, pool, hash map, engine)
+src/              implementation and the extern "C" entry points
+tests/            GoogleTest suites
+bench/            latency/throughput benchmark
 ```
 
-## Tools and resources used
+## Tools
 
-- Language/toolchain: C++20, GCC 13 (Ubuntu 24.04), CMake 3.28.
-- Testing: GoogleTest 1.15.2 (fetched via CMake `FetchContent`).
-- No third-party runtime dependencies in the engine itself — standard
-  library only.
-- AI assistance: this implementation was developed with Claude (Anthropic)
-  as a pair-programming and code-generation aid. Every design decision, and
-  the code and documentation that came out of it, was reviewed by the
-  author.
+C++20, GCC 13, CMake 3.28, GoogleTest 1.15.2. Developed with Claude
+(Anthropic) as a pair-programming aid; all design decisions, code and
+documentation were reviewed by the author.
 
 ## License
 

@@ -109,6 +109,35 @@ TEST(ConfigureTest, InvalidConfigurationParametersAreRejected) {
     }
 }
 
+TEST(ConfigureTest, BandWiderThanMaxPriceLevelsIsRejected) {
+    RecordingListener listener;
+    EngineHandle engine(&listener);
+
+    // 50% band at 1,677,721.60: tick 0.10 throughout, kMaxPriceLevels + 1 levels.
+    InstrumentConfig over{.instrument_id = 1, .reference_price = Price{16777216000}, .band_bps = 5000};
+    EXPECT_EQ(engine->configure(&over, 1, kTestMaxOrders), ConfigureResult::kInvalidArgument);
+
+    // The level count of this band used to wrap uint32 down to 4500, after
+    // which a resting order at 100.10 was written past the level arrays.
+    InstrumentConfig wrapping{.instrument_id = 1, .reference_price = Price{2147484148000},
+                              .band_bps = kMaxBandBps};
+    EXPECT_EQ(engine->configure(&wrapping, 1, kTestMaxOrders), ConfigureResult::kInvalidArgument);
+
+    // A bad band anywhere in the array rejects the whole call, and the engine
+    // stays unconfigured and retryable.
+    std::vector<InstrumentConfig> cfgs = {
+        InstrumentConfig{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000},
+        over,
+    };
+    cfgs[1].instrument_id = 2;
+    EXPECT_EQ(engine->configure(cfgs.data(), cfgs.size(), kTestMaxOrders), ConfigureResult::kInvalidArgument);
+    engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10));
+    ASSERT_EQ(listener.events.size(), 1u);
+    EXPECT_EQ(listener.events[0], Rejected(1, RejectReason::kNotConfigured));
+
+    ASSERT_EQ(engine->configure(cfgs.data(), 1, kTestMaxOrders), ConfigureResult::kOk);
+}
+
 TEST(ConfigureTest, SubmitCancelReplaceAreRejectedWithUnconfiguredEngine) {
     RecordingListener listener;
     EngineHandle engine(&listener);

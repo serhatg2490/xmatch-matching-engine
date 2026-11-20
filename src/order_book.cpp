@@ -17,14 +17,9 @@ void OrderBook::configure(InstrumentId instrument_id, Price reference_price, std
     LevelBitset bid_bitmap;
     LevelBitset ask_bitmap;
 
-    Price delta = (reference_price * static_cast<Price>(band_bps)) / kBpsPerUnit;
-    Price raw_lo = reference_price - delta;
-    Price raw_hi = reference_price + delta;
-    if (raw_lo < 1) raw_lo = 1; // safety floor; band is normally well above zero
-
-    Price lo = ceil_to_tick(raw_lo);
-    Price hi = floor_to_tick(raw_hi);
-    ladder.build(lo, hi);
+    // Same helper Engine::configure used to validate this band's level count.
+    const BandLimits band = band_limits(reference_price, band_bps);
+    ladder.build(band.lo, band.hi);
 
     std::uint32_t n = ladder.size();
     bid_levels.assign(n, Level{});
@@ -79,10 +74,10 @@ void OrderBook::add_resting(OrderPool& pool, std::uint32_t slot, Side side, Pric
     }
     lvl.tail = slot;
     lvl.total_qty += rec.open_qty;
-    ++lvl.order_count;
 
+    // rec.prev is the old tail: invalid means the level was empty until now.
     LevelBitset& bitmap = (side == Side::kBuy) ? bid_bitmap_ : ask_bitmap_;
-    if (lvl.order_count == 1) bitmap.set(idx);
+    if (rec.prev == kInvalidSlot) bitmap.set(idx);
 
     if (side == Side::kBuy) {
         if (best_bid_idx_ < 0 || static_cast<std::int64_t>(idx) > best_bid_idx_) best_bid_idx_ = idx;
@@ -100,13 +95,12 @@ void OrderBook::remove_resting(OrderPool& pool, std::uint32_t slot) noexcept {
     if (rec.prev != kInvalidSlot) pool[rec.prev].next = rec.next; else lvl.head = rec.next;
     if (rec.next != kInvalidSlot) pool[rec.next].prev = rec.prev; else lvl.tail = rec.prev;
     lvl.total_qty -= rec.open_qty; // safe no-op if already fully filled (open_qty == 0)
-    --lvl.order_count;
 
     rec.is_open = false;
     rec.prev = kInvalidSlot;
     rec.next = kInvalidSlot;
 
-    if (lvl.order_count == 0) {
+    if (lvl.head == kInvalidSlot) { // that was the level's last order
         LevelBitset& bitmap = (side == Side::kBuy) ? bid_bitmap_ : ask_bitmap_;
         bitmap.clear(idx);
         if (side == Side::kBuy && best_bid_idx_ == static_cast<std::int64_t>(idx)) {
@@ -135,7 +129,7 @@ void OrderBook::replace_in_place(OrderPool& pool, std::uint32_t old_slot, std::u
     if (old_rec.next != kInvalidSlot) pool[old_rec.next].prev = new_slot; else lvl.tail = new_slot;
 
     lvl.total_qty = lvl.total_qty - old_rec.open_qty + new_rec.open_qty;
-    // order_count, bitmap, and best index are unchanged: the level held
+    // Bitmap and best index are unchanged: the level held
     // exactly one occupant before and holds exactly one (the new slot) now.
 
     old_rec.is_open = false;

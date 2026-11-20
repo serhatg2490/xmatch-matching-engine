@@ -1,7 +1,7 @@
 // ============================================================================
 //  xmatch — public API for the matching engine shared library
 //  File: xmatch/matching_engine_api.hpp
-//  API version: 4
+//  API version: 5
 //
 //  Copyright (c) 2025 Serhat Gul. Released under the MIT License; see LICENSE.
 //
@@ -57,14 +57,22 @@ using Quantity = std::uint32_t; // lots; this engine treats 1 lot as 1 share
 using OrderId = std::uint64_t;  // assigned by the caller, unique per engine
 using TradeId = std::uint64_t;  // assigned by the engine, 1, 2, 3, ...
 using InstrumentId = std::uint32_t;
+// The sum of many Quantity values, e.g. every order resting at one price.
+// Wider than Quantity so that two large orders at one level cannot wrap it.
+using AggregateQuantity = std::uint64_t;
 
-inline constexpr std::uint32_t kApiVersion = 4;
+inline constexpr std::uint32_t kApiVersion = 5;
 inline constexpr Price kPriceScale = 10000; // price units per 1.00
 inline constexpr std::uint32_t kBpsPerUnit = 10000; // basis points in 1.0 (100%)
 inline constexpr std::uint32_t kMaxBandBps = kBpsPerUnit; // widest band configure() accepts (100%)
 // Largest max_orders configure() accepts (2^32 - 2). Slot 0xFFFFFFFF is the
 // engine's internal "no order" sentinel, so it can never be a real order.
 inline constexpr std::uint32_t kMaxOrderCapacity = 0xFFFFFFFEu;
+// Most tick-aligned prices one instrument's band may span (2^24, per side).
+// The book keeps one array slot per price in the band, so this caps an
+// instrument's level arrays at ~512 MB. The limit is on the number of
+// levels, not on the price: it holds whatever the tick table looks like.
+inline constexpr std::uint32_t kMaxPriceLevels = 1u << 24;
 
 enum class Side : std::uint8_t {
     kBuy = 0,
@@ -115,6 +123,7 @@ enum class ConfigureResult : std::uint8_t {
                              // 4) band_bps > kMaxBandBps
                              // 5) count == 0 or count > UINT32_MAX
                              // 6) max_orders == 0 or max_orders > kMaxOrderCapacity
+                             // 7) the band spans more than kMaxPriceLevels price levels
     kOutOfMemory = 3,       // the engine could not allocate enough memory for the requested instruments
     kInternalError = 4,      // an unexpected exception was thrown during configuration; the engine is left unconfigured
 };
@@ -174,11 +183,13 @@ struct ReplaceOrder {
     Quantity new_quantity; // total, including whatever has already filled
 };
 
+// The quantities are the total open quantity at the best price, summed over
+// every order resting there, so they are AggregateQuantity, not Quantity.
 struct TopOfBook {
-    Price bid_price;       // only meaningful when bid_quantity > 0
-    Quantity bid_quantity; // zero means there are no buy orders
-    Price ask_price;       // only meaningful when ask_quantity > 0
-    Quantity ask_quantity; // zero means there are no sell orders
+    Price bid_price;                // only meaningful when bid_quantity > 0
+    AggregateQuantity bid_quantity; // zero means there are no buy orders
+    Price ask_price;                // only meaningful when ask_quantity > 0
+    AggregateQuantity ask_quantity; // zero means there are no sell orders
 };
 
 // ---------------------------------------------------------------------------
@@ -246,6 +257,8 @@ public:
         // 4) band_bps > kMaxBandBps
         // 5) count == 0 or count > UINT32_MAX
         // 6) max_orders == 0 or max_orders > kMaxOrderCapacity
+        // 7) an instrument's band spans more than kMaxPriceLevels price levels
+        //    (the number of tick-aligned prices between its two band limits)
     // max_orders is a hard cap on the order ids the engine will ever record:
     // every submit() that gets past the duplicate-id check and every replace()
     // that installs a new order uses one. Memory for all of them is reserved

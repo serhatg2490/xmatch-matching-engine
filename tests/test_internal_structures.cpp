@@ -4,6 +4,8 @@
 // map (order id index), and the chunked order pool.
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+
 #include "engine/flat_hash_map.hpp"
 #include "engine/level_bitset.hpp"
 #include "engine/order_pool.hpp"
@@ -91,6 +93,54 @@ TEST(PriceLadderTest, BandSpanningTwoTickRegimes) {
     ASSERT_GE(above, 0);
     EXPECT_EQ(static_cast<std::uint32_t>(above), static_cast<std::uint32_t>(at) + 1)
         << "indices must stay contiguous across the regime boundary";
+}
+
+TEST(PriceLadderTest, SizeMatchesLadderLevelCount) {
+    // configure() validates price_level_count(); the book allocates
+    // PriceLadder::size(). They must agree for every band shape.
+    // 5.00, 19.90, 20.00, 49.80, 99.95, 100.00, 450.00: next to each regime edge.
+    const Price refs[] = {50000, 199000, 200000, 498000, 999500, 1000000, 4500000};
+    const std::uint32_t bands[] = {0, 1, 500, 1000, 5000, kMaxBandBps};
+    for (Price ref : refs) {
+        for (std::uint32_t bps : bands) {
+            const BandLimits band = band_limits(ref, bps);
+            PriceLadder ladder;
+            ladder.build(band.lo, band.hi);
+            EXPECT_EQ(ladder.size(), price_level_count(band.lo, band.hi)) << ref << " " << bps;
+            // The highest index maps back to the top of the band.
+            ASSERT_GT(ladder.size(), 0u);
+            EXPECT_EQ(ladder.index_to_price(ladder.size() - 1), band.hi) << ref << " " << bps;
+        }
+    }
+}
+
+TEST(PriceLadderTest, BuildAcceptsBandJustBelowLevelCap) {
+    // Tick 0.10 throughout: (hi - lo) / 1000 + 1 == kMaxPriceLevels - 1.
+    // PriceLadder holds only its segments, so this allocates almost nothing.
+    const BandLimits band = band_limits(16777214000, 5000);
+    ASSERT_EQ(price_level_count(band.lo, band.hi), kMaxPriceLevels - 1u);
+    PriceLadder ladder;
+    ladder.build(band.lo, band.hi);
+    EXPECT_EQ(ladder.size(), kMaxPriceLevels - 1u);
+    EXPECT_EQ(ladder.price_to_index(band.hi), static_cast<std::int64_t>(kMaxPriceLevels) - 2);
+    EXPECT_EQ(ladder.index_to_price(kMaxPriceLevels - 2u), band.hi);
+}
+
+TEST(PriceLadderTest, BuildRejectsBandOverLevelCap) {
+    const BandLimits over = band_limits(16777216000, 5000);
+    ASSERT_EQ(price_level_count(over.lo, over.hi), kMaxPriceLevels + 1u);
+    PriceLadder ladder;
+    EXPECT_THROW(ladder.build(over.lo, over.hi), std::length_error);
+
+    // The band whose level count used to wrap uint32 (to 4500 levels).
+    const BandLimits wrapping = band_limits(2147484148000, 10000);
+    EXPECT_THROW(ladder.build(wrapping.lo, wrapping.hi), std::length_error);
+
+    // Strong guarantee: a failed build leaves the ladder as it was.
+    ladder.build(225000, 275000);
+    EXPECT_THROW(ladder.build(over.lo, over.hi), std::length_error);
+    EXPECT_EQ(ladder.size(), 251u);
+    EXPECT_EQ(ladder.band_lo(), 225000);
 }
 
 // --------------------------------------------------------------------- //

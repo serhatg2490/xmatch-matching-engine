@@ -98,8 +98,8 @@ touched structs must stay narrow.
 
 ```cpp
 struct Level { std::list<Order*> orders; };   // bad  — a cache miss at every step
-struct Level { std::uint32_t head, tail; Quantity total_qty;
-               std::uint32_t order_count; }; // good — 16 bytes, no padding
+struct Level { std::uint32_t head, tail;
+               AggregateQuantity total_qty; }; // good — 16 bytes, no padding, sum can't wrap
 ```
 
 In the project: `include/engine/order_book.hpp` — `Level` is 16 bytes, in two flat arrays.

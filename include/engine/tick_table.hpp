@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 
 #include "xmatch/matching_engine_api.hpp"
@@ -72,6 +74,67 @@ constexpr Price floor_to_tick(Price price) noexcept {
     Price step = tick_size(price);
     Price rem = price % step;
     return price - rem;
+}
+
+// An instrument's daily band, already pulled inward onto valid ticks.
+struct BandLimits {
+    Price lo; // lowest tick-aligned price in the band
+    Price hi; // highest tick-aligned price in the band
+};
+
+// [reference_price * (1 - band_bps/10000), reference_price * (1 + band_bps/10000)],
+// lower end rounded up and upper end rounded down onto a tick. Precondition
+// (enforced by Engine::configure): 0 < reference_price <= INT64_MAX / kMaxBandBps
+// and band_bps <= kMaxBandBps, so the product and the upper end fit in Price.
+constexpr BandLimits band_limits(Price reference_price, std::uint32_t band_bps) noexcept {
+    const Price delta = (reference_price * static_cast<Price>(band_bps)) / kBpsPerUnit;
+    Price raw_lo = reference_price - delta;
+    const Price raw_hi = reference_price + delta;
+    if (raw_lo < 1) raw_lo = 1; // safety floor; band is normally well above zero
+    return BandLimits{ceil_to_tick(raw_lo), floor_to_tick(raw_hi)};
+}
+
+// A run of prices that share one tick: lo, lo + tick, ..., hi. It is the part
+// of a band that falls inside one bracket of kTickSchedule. Bounds are
+// inclusive, like BandLimits.
+struct TickSpan {
+    Price lo;            // first price, tick-aligned
+    Price hi;            // last price
+    Price tick;
+    std::uint64_t count; // prices in the span; 64-bit, so a huge band cannot wrap it
+};
+
+// The span that begins at `lo` (tick-aligned, <= band_hi) and runs to the end
+// of lo's tick bracket or to band_hi, whichever comes first. PriceLadder::build
+// and price_level_count both walk a band with this one function, so the level
+// count configure() validates is exactly the number of levels the book
+// later allocates.
+constexpr TickSpan tick_span_at(Price lo, Price band_hi) noexcept {
+    for (const TickBracket& bracket : kTickSchedule) {
+        if (lo < bracket.upper_exclusive) {
+            const Price hi = (bracket.upper_exclusive == std::numeric_limits<Price>::max())
+                                 ? band_hi
+                                 : std::min(band_hi, bracket.upper_exclusive - bracket.tick);
+            return TickSpan{lo, hi, bracket.tick,
+                            static_cast<std::uint64_t>((hi - lo) / bracket.tick) + 1};
+        }
+    }
+    // unreachable: the last bracket is open-ended
+    return TickSpan{lo, band_hi, kCoarsestTick,
+                    static_cast<std::uint64_t>((band_hi - lo) / kCoarsestTick) + 1};
+}
+
+// Number of tick-aligned prices in [lo, hi], i.e. the ladder size for that
+// band. Computed in 64 bits, so it is safe to call on a band far too wide to
+// build; configure() compares it against kMaxPriceLevels before building.
+constexpr std::uint64_t price_level_count(Price lo, Price hi) noexcept {
+    std::uint64_t total = 0;
+    for (Price cur = lo; cur <= hi;) {
+        const TickSpan span = tick_span_at(cur, hi);
+        total += span.count;
+        cur = span.hi + span.tick;
+    }
+    return total;
 }
 
 } // namespace xmatch::detail

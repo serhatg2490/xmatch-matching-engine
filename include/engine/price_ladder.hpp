@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "xmatch/matching_engine_api.hpp"
+#include "engine/tick_table.hpp"
 
 namespace xmatch::detail {
 
@@ -18,8 +19,15 @@ namespace xmatch::detail {
 // sits close to one of the regime boundaries (20/50/100 TRY); we handle
 // that by keeping a handful of contiguous segments, one per regime the
 // band touches.
+// Ladder indices are uint32 (Level arrays, OrderRecord::level_index) and the
+// book's cached best index is int64 with -1 meaning "empty". Capping the
+// ladder at kMaxPriceLevels keeps every index, and offset + count, in range.
+static_assert(kMaxPriceLevels < UINT32_MAX, "ladder indices must fit in uint32 with room to spare");
+
 class PriceLadder {
 public:
+    // Throws std::length_error if [band_lo, band_hi] holds more than
+    // kMaxPriceLevels tick-aligned prices; may throw bad_alloc.
     void build(Price band_lo, Price band_hi);
 
     // -1 if price is outside the band or not tick-aligned within it.
@@ -33,12 +41,11 @@ public:
     Price band_hi() const noexcept { return band_hi_; }
 
 private:
+    // One tick span of the band, placed in the ladder: span.lo sits at
+    // first_index, span.lo + k*span.tick at first_index + k.
     struct Segment {
-        Price start_price; // inclusive, tick-aligned
-        Price end_price;   // inclusive, tick-aligned
-        Price tick;
-        std::uint32_t index_offset;
-        std::uint32_t count;
+        TickSpan span;
+        std::uint32_t first_index; // ladder index of span.lo
     };
 
     std::vector<Segment> segments_; // ascending by price, at most 4 entries

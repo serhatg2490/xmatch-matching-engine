@@ -103,9 +103,18 @@ prose and the tests together.
   `FlatHashMap`), setting `configured_` last. A failed call leaves the engine unconfigured
   and may be retried; only the first *successful* call takes effect.
 - **`configure()` reports its outcome** as a `[[nodiscard]] ConfigureResult` (API v2).
-  All input validation (pointer, count, `max_orders`, reference price, `band_bps`, duplicate ids) runs
-  before any book is built and returns `kInvalidArgument`; `bad_alloc` maps to
+  All input validation (pointer, count, `max_orders`, reference price, `band_bps`, ladder size,
+  duplicate ids) runs before any book is built and returns `kInvalidArgument`; `bad_alloc` maps to
   `kOutOfMemory`, any other exception to `kInternalError`.
+- **Ladder size is capped by level count, not by price (API v5).** A band may span at most
+  `kMaxPriceLevels` (2^24) tick-aligned prices. `configure()` checks `price_level_count()`
+  (64-bit, `tick_table.hpp`), which walks the band with the same `tick_span_at()` that
+  `PriceLadder::build` uses, so validation and allocation cannot disagree; `build` re-checks and
+  throws `std::length_error`. This keeps every ladder index in `uint32_t`.
+- **Aggregates are 64-bit (API v5).** `Quantity` (one order) is `uint32_t`; any sum of
+  quantities — `Level::total_qty`, the FOK pre-check, `TopOfBook` — is `AggregateQuantity`
+  (`uint64_t`), which cannot wrap. `Level` stays 16 B because it keeps no order count
+  (empty ⇔ `head == kInvalidSlot`).
 - **Integer price arithmetic only** — `Price` is `int64_t` at 1/10000 units. No `float`
   or `double` anywhere near tick, band, or trade-price math. The band divisor is
   `kBpsPerUnit`, never `kPriceScale` — equal today, unrelated in meaning.

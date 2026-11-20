@@ -58,5 +58,18 @@ static_assert(ceil_to_tick(251000) == 251000);
 static_assert(floor_to_tick(251199) == 251000);
 static_assert(floor_to_tick(251000) == 251000);
 
+// Band limits and ladder size: the numbers configure() validates against.
+static_assert(band_limits(250000, 1000).lo == 225000);   // 25.00 +/- 10%
+static_assert(band_limits(250000, 1000).hi == 275000);
+static_assert(band_limits(250000, 10000).lo == 100);     // +/-100%: floored at 1, then ceiled
+static_assert(price_level_count(225000, 275000) == 251);  // one regime, tick 0.02
+static_assert(price_level_count(180000, 220000) == 301);  // 200 at 0.01 + 101 at 0.02
+static_assert(price_level_count(100, 1000000) == 4500);   // all four regimes
+static_assert(price_level_count(250000, 250000) == 1);    // band_bps = 0
+// This band once wrapped the uint32 level count down to 4500 levels while
+// its prices still indexed up to ~4.29e9: the count must stay exact.
+static_assert(price_level_count(band_limits(2147484148000, 10000).lo,
+                                band_limits(2147484148000, 10000).hi) == 4294971796ull);
+
 } // namespace
 } // namespace xmatch::detail

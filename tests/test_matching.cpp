@@ -40,6 +40,46 @@ TEST_F(MatchingTest, PriceThenTimePriorityAcrossLevels) {
     for (std::size_t i = 0; i < expected.size(); ++i) EXPECT_EQ(listener.events[i], expected[i]) << i;
 }
 
+TEST_F(MatchingTest, LevelTotalAboveUint32MaxIsExact) {
+    // Two 3e9 sells at one price: 6e9 total, which a uint32 level total
+    // used to wrap to 1,705,032,704.
+    constexpr Quantity kBig = 3'000'000'000u;
+    engine->submit(MakeLimit(1, 1, Side::kSell, TimeInForce::kDay, Px(25), kBig));
+    engine->submit(MakeLimit(2, 1, Side::kSell, TimeInForce::kDay, Px(25), kBig));
+    EXPECT_EQ(engine->top_of_book(1).ask_quantity, AggregateQuantity{6'000'000'000});
+
+    // FOK for 4e9 fits in the level's real 6e9; the wrapped total would
+    // have canceled it as kFokUnfillable.
+    listener.events.clear();
+    engine->submit(MakeLimit(3, 1, Side::kBuy, TimeInForce::kFok, Px(25), 4'000'000'000u));
+    std::vector<RecordedEvent> expected = {
+        Accepted(3),
+        Trade(1, Px(25), kBig, /*resting=*/1, /*aggr=*/3, Side::kBuy),
+        Trade(1, Px(25), 1'000'000'000u, /*resting=*/2, /*aggr=*/3, Side::kBuy),
+    };
+    ASSERT_EQ(listener.events.size(), expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) EXPECT_EQ(listener.events[i], expected[i]) << i;
+    EXPECT_EQ(engine->top_of_book(1).ask_quantity, AggregateQuantity{2'000'000'000});
+}
+
+TEST_F(MatchingTest, FokSumAcrossLevelsAboveUint32MaxIsExact) {
+    // 3e9 at each of two prices: each level total fits in uint32, but the
+    // FOK pre-check's running sum (6e9) does not.
+    constexpr Quantity kBig = 3'000'000'000u;
+    engine->submit(MakeLimit(1, 1, Side::kSell, TimeInForce::kDay, Px(25), kBig));
+    engine->submit(MakeLimit(2, 1, Side::kSell, TimeInForce::kDay, Px(25, 200), kBig));
+    listener.events.clear();
+
+    engine->submit(MakeLimit(3, 1, Side::kBuy, TimeInForce::kFok, Px(25, 200), 4'000'000'000u));
+    std::vector<RecordedEvent> expected = {
+        Accepted(3),
+        Trade(1, Px(25), kBig, /*resting=*/1, /*aggr=*/3, Side::kBuy),
+        Trade(1, Px(25, 200), 1'000'000'000u, /*resting=*/2, /*aggr=*/3, Side::kBuy),
+    };
+    ASSERT_EQ(listener.events.size(), expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) EXPECT_EQ(listener.events[i], expected[i]) << i;
+}
+
 TEST_F(MatchingTest, LimitDayRestsWhenNotMarketable) {
     engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25, 1000), 10));
     ASSERT_EQ(listener.events.size(), 1u);
