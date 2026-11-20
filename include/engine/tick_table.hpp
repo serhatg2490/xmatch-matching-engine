@@ -45,7 +45,7 @@ inline constexpr std::size_t kTickBracketCount =
 // uses. Kept as a named constant so the fallback below states its intent.
 inline constexpr Price kCoarsestTick = kTickSchedule[kTickBracketCount - 1].tick;
 
-constexpr Price tick_size(Price price) {
+constexpr Price tick_size(Price price) noexcept {
     for (const TickBracket& bracket : kTickSchedule) {
         if (price < bracket.upper_exclusive) return bracket.tick;
     }
@@ -53,13 +53,13 @@ constexpr Price tick_size(Price price) {
 }
 
 // True iff price > 0 and price is aligned to the tick of its bracket.
-constexpr bool is_tick_aligned(Price price) {
+constexpr bool is_tick_aligned(Price price) noexcept {
     if (price <= 0) return false;
     return price % tick_size(price) == 0;
 }
 
 // Round UP to the nearest valid tick.
-constexpr Price ceil_to_tick(Price price) {
+constexpr Price ceil_to_tick(Price price) noexcept {
     if (price <= 0) return tick_size(0);
     Price step = tick_size(price);
     Price rem = price % step;
@@ -67,7 +67,7 @@ constexpr Price ceil_to_tick(Price price) {
 }
 
 // Round DOWN to the nearest valid tick.
-constexpr Price floor_to_tick(Price price) {
+constexpr Price floor_to_tick(Price price) noexcept {
     if (price <= 0) return 0;
     Price step = tick_size(price);
     Price rem = price % step;

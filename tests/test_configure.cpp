@@ -14,12 +14,12 @@ TEST(ConfigureTest, ConfigureAfterFirstSuccessfulConfigureIsIgnored) {
     RecordingListener listener;
     EngineHandle engine(&listener);
     InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
-    ASSERT_EQ(engine->configure(&cfg, 1), ConfigureResult::kOk);
+    ASSERT_EQ(engine->configure(&cfg, 1, kTestMaxOrders), ConfigureResult::kOk);
     engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10));
 
     InstrumentConfig other{.instrument_id = 2, .reference_price = Px(60), .band_bps = 1000};
-    ASSERT_EQ(engine->configure(&cfg, 1), ConfigureResult::kAlreadyConfigured);
-    ASSERT_EQ(engine->configure(&other, 1), ConfigureResult::kAlreadyConfigured);
+    ASSERT_EQ(engine->configure(&cfg, 1, kTestMaxOrders), ConfigureResult::kAlreadyConfigured);
+    ASSERT_EQ(engine->configure(&other, 1, kTestMaxOrders), ConfigureResult::kAlreadyConfigured);
 
     // The resting order survives, stays cancelable, and the book stays consistent.
     TopOfBook tob = engine->top_of_book(1);
@@ -42,10 +42,10 @@ TEST(ConfigureTest, CanBeConfiguredAfterFirstConfigureFails) {
     EngineHandle engine(&listener);
     InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
     // Configuring with a null pointer and SIZE_MAX returns ConfigureResult::kInvalidArgument
-    ASSERT_EQ(engine->configure(nullptr, SIZE_MAX), ConfigureResult::kInvalidArgument);
+    ASSERT_EQ(engine->configure(nullptr, SIZE_MAX, kTestMaxOrders), ConfigureResult::kInvalidArgument);
     // Now configure with a proper instrument, which should succeed 
     // and leave the engine usable.
-    ASSERT_EQ(engine->configure(&cfg, 1), ConfigureResult::kOk);
+    ASSERT_EQ(engine->configure(&cfg, 1, kTestMaxOrders), ConfigureResult::kOk);
     engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10));
 
     // There is one resting order on instrument 1, and the book is consistent.
@@ -60,48 +60,52 @@ TEST(ConfigureTest, InvalidConfigurationParametersAreRejected) {
     RecordingListener listener;
     EngineHandle engine(&listener);
     InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
-    ASSERT_EQ(engine->configure(nullptr, 0), ConfigureResult::kInvalidArgument);
-    ASSERT_EQ(engine->configure(nullptr, 1), ConfigureResult::kInvalidArgument);
-    ASSERT_EQ(engine->configure(&cfg, std::size_t{UINT32_MAX} + 1), ConfigureResult::kInvalidArgument);
-    ASSERT_EQ(engine->configure(&cfg, 0), ConfigureResult::kInvalidArgument);
+    ASSERT_EQ(engine->configure(nullptr, 0, kTestMaxOrders), ConfigureResult::kInvalidArgument);
+    ASSERT_EQ(engine->configure(nullptr, 1, kTestMaxOrders), ConfigureResult::kInvalidArgument);
+    ASSERT_EQ(engine->configure(&cfg, std::size_t{UINT32_MAX} + 1, kTestMaxOrders), ConfigureResult::kInvalidArgument);
+    ASSERT_EQ(engine->configure(&cfg, 0, kTestMaxOrders), ConfigureResult::kInvalidArgument);
+    // max_orders is zero, or large enough that a slot index could equal the internal sentinel.
+    // Rejected before any allocation, so the oversized value costs nothing.
+    ASSERT_EQ(engine->configure(&cfg, 1, 0), ConfigureResult::kInvalidArgument);
+    ASSERT_EQ(engine->configure(&cfg, 1, kMaxOrderCapacity + 1), ConfigureResult::kInvalidArgument);
     // Reference price is zero
     InstrumentConfig cfg2{.instrument_id = 1, .reference_price = Px(0), .band_bps = 1000};
-    ASSERT_EQ(engine->configure(&cfg2, 1), ConfigureResult::kInvalidArgument);
+    ASSERT_EQ(engine->configure(&cfg2, 1, kTestMaxOrders), ConfigureResult::kInvalidArgument);
     // Reference price is negative
     InstrumentConfig cfg3{.instrument_id = 1, .reference_price = Px(-1), .band_bps = 1000};
-    ASSERT_EQ(engine->configure(&cfg3, 1), ConfigureResult::kInvalidArgument);
+    ASSERT_EQ(engine->configure(&cfg3, 1, kTestMaxOrders), ConfigureResult::kInvalidArgument);
     // Bps > kMaxBandBps
     InstrumentConfig cfg4{.instrument_id = 1, .reference_price = Px(25), .band_bps = 10001};
-    ASSERT_EQ(engine->configure(&cfg4, 1), ConfigureResult::kInvalidArgument);
+    ASSERT_EQ(engine->configure(&cfg4, 1, kTestMaxOrders), ConfigureResult::kInvalidArgument);
 
     // Duplicate instrument ids
     std::vector<InstrumentConfig> cfgs = {
         InstrumentConfig{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000},
         InstrumentConfig{.instrument_id = 1, .reference_price = Px(60), .band_bps = 1000},
     };
-    ASSERT_EQ(engine->configure(cfgs.data(), cfgs.size()), ConfigureResult::kInvalidArgument);
+    ASSERT_EQ(engine->configure(cfgs.data(), cfgs.size(), kTestMaxOrders), ConfigureResult::kInvalidArgument);
 
     // Reference price is not tick aligned
     InstrumentConfig cfg5{.instrument_id = 1, .reference_price = Px(25, 50), .band_bps = 1000};
-    ASSERT_EQ(engine->configure(&cfg5, 1), ConfigureResult::kInvalidArgument);
+    ASSERT_EQ(engine->configure(&cfg5, 1, kTestMaxOrders), ConfigureResult::kInvalidArgument);
 
     // Reference price is too large
     InstrumentConfig cfg6{.instrument_id = 1,
                                         // ceil_to_tick(std::numeric_limits<Price>::max() / kMaxBandBps + 1)
                                        .reference_price = Price{922337203686000},
                                        .band_bps = 1000};
-    ASSERT_EQ(engine->configure(&cfg6, 1), ConfigureResult::kInvalidArgument);
+    ASSERT_EQ(engine->configure(&cfg6, 1, kTestMaxOrders), ConfigureResult::kInvalidArgument);
 
     // Bps == kMaxBandBps and Bps = 0 are accepted
     {
         EngineHandle engine2(&listener);
         InstrumentConfig cfg7{.instrument_id = 1, .reference_price = Px(25), .band_bps = kMaxBandBps};
-        ASSERT_EQ(engine2->configure(&cfg7, 1), ConfigureResult::kOk);
+        ASSERT_EQ(engine2->configure(&cfg7, 1, kTestMaxOrders), ConfigureResult::kOk);
     }
     {
         EngineHandle engine3(&listener);
         InstrumentConfig cfg8{.instrument_id = 1, .reference_price = Px(25), .band_bps = 0};
-        ASSERT_EQ(engine3->configure(&cfg8, 1), ConfigureResult::kOk);
+        ASSERT_EQ(engine3->configure(&cfg8, 1, kTestMaxOrders), ConfigureResult::kOk);
     }
 }
 
@@ -119,7 +123,7 @@ TEST(ConfigureTest, SubmitCancelReplaceAreRejectedWithUnconfiguredEngine) {
     listener.events.clear();
 
     // Submit/cancel/replace requests after invalid config attempt are rejected too
-    ASSERT_EQ(engine->configure(nullptr, 0), ConfigureResult::kInvalidArgument);
+    ASSERT_EQ(engine->configure(nullptr, 0, kTestMaxOrders), ConfigureResult::kInvalidArgument);
     engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10));
     engine->cancel(CancelOrder{.order_id = 2});
     engine->replace(ReplaceOrder{.order_id = 3, .new_order_id = 10, .new_price = Px(25, 1000), .new_quantity = 60});
@@ -131,7 +135,7 @@ TEST(ConfigureTest, SubmitCancelReplaceAreRejectedWithUnconfiguredEngine) {
     // Now configure with a valid configuration
     InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
     listener.events.clear();
-    ASSERT_EQ(engine->configure(&cfg, 1), ConfigureResult::kOk);
+    ASSERT_EQ(engine->configure(&cfg, 1, kTestMaxOrders), ConfigureResult::kOk);
     // Submit an order
     engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10));
     // There is one resting order on instrument 1, and the book is consistent.

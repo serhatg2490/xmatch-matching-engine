@@ -19,7 +19,7 @@ TEST(MultiInstrumentTest, OrdersOnOneInstrumentDoNotAffectAnother) {
         InstrumentConfig{.instrument_id = 2, .reference_price = Px(60), .band_bps = 1000},
     };
 
-    ASSERT_EQ(engine->configure(cfgs.data(), cfgs.size()), ConfigureResult::kOk);
+    ASSERT_EQ(engine->configure(cfgs.data(), cfgs.size(), kTestMaxOrders), ConfigureResult::kOk);
 
     engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25, 1000), 10));
     engine->submit(MakeLimit(2, 2, Side::kBuy, TimeInForce::kDay, Px(60), 20));
@@ -45,7 +45,7 @@ TEST(MultiInstrumentTest, DifferentTickRegimesGetDifferentBands) {
     std::vector<InstrumentConfig> cfgs = {
         InstrumentConfig{.instrument_id = 3, .reference_price = Px(120), .band_bps = 1000},
     };
-    ASSERT_EQ(engine->configure(cfgs.data(), cfgs.size()), ConfigureResult::kOk);
+    ASSERT_EQ(engine->configure(cfgs.data(), cfgs.size(), kTestMaxOrders), ConfigureResult::kOk);
 
     // 108.05 is not a multiple of 0.10 -> invalid tick.
     engine->submit(MakeLimit(1, 3, Side::kBuy, TimeInForce::kDay, Px(108, 500), 10));
@@ -74,7 +74,7 @@ TEST(MultiInstrumentTest, HundredPlusInstrumentsEachIndependentlyCorrect) {
                                          .reference_price = Px(10 + i),
                                          .band_bps = 1000});
     }
-    ASSERT_EQ(engine->configure(cfgs.data(), cfgs.size()), ConfigureResult::kOk);
+    ASSERT_EQ(engine->configure(cfgs.data(), cfgs.size(), kTestMaxOrders), ConfigureResult::kOk);
 
     OrderId next_id = 1;
     for (int i = 0; i < kCount; ++i) {
@@ -96,7 +96,7 @@ TEST(MultiInstrumentTest, TopOfBookOnUnconfiguredInstrumentIsSafelyEmpty) {
     RecordingListener listener;
     EngineHandle engine(&listener);
     InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
-    ASSERT_EQ(engine->configure(&cfg, 1), ConfigureResult::kOk);
+    ASSERT_EQ(engine->configure(&cfg, 1, kTestMaxOrders), ConfigureResult::kOk);
 
     TopOfBook tob = engine->top_of_book(42);
     EXPECT_EQ(tob.bid_quantity, 0u);

@@ -29,13 +29,22 @@ reliably cross). 500,000 warm-up ops run untimed first; each subsequent
 
 | seed | p50 (ns) | p90 (ns) | p99 (ns) | p99.9 (ns) | max (ns) | throughput (ops/s) |
 |---|---|---|---|---|---|---|
-| 42  | 233 | 429 | 636 | 938 | 416,737 | 2,515,920 |
-| 123 | 233 | 428 | 625 | 910 | 101,411 | 2,530,571 |
-| 777 | 233 | 429 | 634 | 934 | 161,780 | 2,522,325 |
+| 42  | 234 | 433 | 636 | 884 | 101,157 | 2,574,710 |
+| 123 | 235 | 434 | 643 | 894 | 20,746 | 2,568,899 |
+| 777 | 233 | 431 | 628 | 872 | 31,539 | 2,590,737 |
 
-RSS was flat across every run: ~1442 MB before the timed loop and ~1442 MB
-after (the pool and id-index reserves in `configure()` are sized to cover
-this workload without growing — see `DESIGN.md`).
+The benchmark passes `max_orders = warmup_ops + num_ops` (10.5M here) to
+`configure()`: every op records at most one order id, so the run can never
+hit `kCapacityExceeded`, and nothing beyond that is reserved. RSS was flat
+across every run: ~899 MB before the timed loop and ~899 MB after, since the
+pool and id index never grow after `configure()` (see `DESIGN.md`).
+
+Earlier builds reserved a fixed 2²⁴ (~16.7M) orders, for ~1442 MB RSS.
+Measured back to back on the same core, sizing the reserve to the workload
+left p50 unchanged and improved p99/p99.9 by a few percent and throughput by
+~2–4% across three seeds. The likely cause is a smaller working set (less
+TLB/cache pressure); the id index fills further, but the ids actually
+recorded stay well below 10.5M, so probe chains stay short.
 
 Event mix actually exercised (seed 42): 6.81M accepted, 1.78M rejected
 (mostly `kUnknownOrder` from the generator's own simplified id bookkeeping —
@@ -48,9 +57,9 @@ see "Workload generator limitations" below), 2.18M trades, 1.82M canceled,
   nanoseconds of each other across three different seeds. Median is
   sub-microsecond (~233 ns) and p99.9 stays under 1 µs — comfortably
   inside the sub-microsecond-median, single-digit-µs-p99 range this engine
-  was designed for. Throughput is consistently ~2.5M ops/sec
+  was designed for. Throughput is consistently ~2.6M ops/sec
   single-threaded.
-- **`max` is not reproducible run-to-run** (44 µs–417 µs observed across
+- **`max` is not reproducible run-to-run** (21 µs–417 µs observed across
   otherwise-identical runs) and does not correlate with a specific op type
   or workload phase. That signature — a handful of outliers 2–3 orders of
   magnitude above p99.9, uncorrelated with input — is the fingerprint of

@@ -205,93 +205,89 @@ TEST(FlatHashMapTest, FailedReserveLeavesMapUnchanged) {
     EXPECT_EQ(*map.find(5000), 5000u);
 }
 
+TEST(FlatHashMapTest, HasRoomForTracksLoadLimit) {
+    FlatHashMap map;
+    map.reserve(100);
+    EXPECT_TRUE(map.has_room_for(100)) << "reserve(n) must leave room for n entries";
+    for (std::uint64_t i = 0; i < 100; ++i) map.insert_no_grow(i, static_cast<std::uint32_t>(i));
+    EXPECT_TRUE(map.has_room_for(0));
+    EXPECT_FALSE(map.has_room_for(std::size_t{1} << 20));
+}
+
+TEST(FlatHashMapTest, InsertNoGrowNeverRehashes) {
+    FlatHashMap map;
+    map.reserve(1000);
+    map.insert_no_grow(0, 0);
+    std::uint32_t* v = map.find(0);
+    for (std::uint64_t i = 1; i < 1000; ++i) map.insert_no_grow(i * 7, static_cast<std::uint32_t>(i));
+    EXPECT_EQ(map.find(0), v) << "insert_no_grow must not move the slot array";
+    EXPECT_EQ(map.size(), 1000u);
+    for (std::uint64_t i = 1; i < 1000; ++i) {
+        ASSERT_NE(map.find(i * 7), nullptr);
+        EXPECT_EQ(*map.find(i * 7), i);
+    }
+}
+
 // --------------------------------------------------------------------- //
 // OrderPool
 // --------------------------------------------------------------------- //
 
-TEST(OrderPoolTest, AllocateReturnsStableIndicesAndData) {
+// A real slot index is always < capacity <= kMaxOrderCapacity, so it can never
+// be mistaken for the "no order" link sentinel.
+static_assert(kMaxOrderCapacity < kInvalidSlot);
+
+TEST(OrderPoolTest, DefaultPoolHasNoCapacity) {
     OrderPool pool;
-    std::uint32_t a = pool.allocate();
-    std::uint32_t b = pool.allocate();
+    EXPECT_EQ(pool.capacity(), 0u);
+    EXPECT_TRUE(pool.full());
+    EXPECT_EQ(pool.try_allocate(), kInvalidSlot);
+    EXPECT_EQ(pool.size(), 0u);
+}
+
+TEST(OrderPoolTest, AllocateReturnsStableIndicesAndData) {
+    OrderPool pool(4);
+    std::uint32_t a = pool.try_allocate();
+    std::uint32_t b = pool.try_allocate();
     EXPECT_NE(a, b);
     pool[a].id = 111;
     pool[b].id = 222;
     EXPECT_EQ(pool[a].id, 111u);
     EXPECT_EQ(pool[b].id, 222u);
     EXPECT_EQ(pool.size(), 2u);
+    EXPECT_EQ(pool.capacity(), 4u);
 }
 
-TEST(OrderPoolTest, SurvivesCrossingAChunkBoundary) {
-    OrderPool pool;
-    // kChunkSize is 1<<20; allocate enough to force a second chunk and
-    // verify earlier slots stay valid and correctly addressed afterward.
-    constexpr std::uint32_t kOverChunk = (1u << 20) + 10;
-    std::uint32_t first = pool.allocate();
+TEST(OrderPoolTest, TryAllocateReturnsInvalidSlotWhenFull) {
+    OrderPool pool(2);
+    std::uint32_t a = pool.try_allocate();
+    std::uint32_t b = pool.try_allocate();
+    pool[a].id = 123;
+    pool[b].id = 456;
+    EXPECT_TRUE(pool.full());
+
+    EXPECT_EQ(pool.try_allocate(), kInvalidSlot);
+    EXPECT_EQ(pool.try_allocate(), kInvalidSlot) << "a full pool stays full";
+
+    EXPECT_EQ(pool.size(), 2u);
+    EXPECT_EQ(pool[a].id, 123u) << "a failed allocation must not touch existing slots";
+    EXPECT_EQ(pool[b].id, 456u);
+}
+
+TEST(OrderPoolTest, SpansSeveralChunksWithAPartialLastChunk) {
+    // kChunkSize + 10 slots: one full chunk plus a 10-slot remainder chunk.
+    constexpr std::uint32_t kCapacity = static_cast<std::uint32_t>(OrderPool::kChunkSize) + 10;
+    OrderPool pool(kCapacity);
+    std::uint32_t first = pool.try_allocate();
     pool[first].id = 999;
-    for (std::uint32_t i = 1; i < kOverChunk; ++i) {
-        std::uint32_t idx = pool.allocate();
+    OrderRecord* first_rec = &pool[first];
+    for (std::uint32_t i = 1; i < kCapacity; ++i) {
+        std::uint32_t idx = pool.try_allocate();
+        ASSERT_EQ(idx, i);
         pool[idx].id = idx;
     }
-    EXPECT_EQ(pool[first].id, 999u) << "first slot's data must survive chunk growth";
-    EXPECT_EQ(pool.size(), kOverChunk);
-    EXPECT_EQ(pool[kOverChunk - 1].id, kOverChunk - 1);
-}
-
-TEST(OrderPoolTest, ReserveOnPopulatedPoolKeepsExistingSlots) {
-    OrderPool pool;
-    std::uint32_t a = pool.allocate();
-    std::uint32_t b = pool.allocate();
-    pool[a].id = 123;
-    pool[b].id = 456;
-    OrderRecord& rec_a = pool[a];
-    OrderRecord& rec_b = pool[b];
-
-    pool.reserve(3 * OrderPool::kChunkSize); // force growth
-
-    EXPECT_EQ(&pool[a], &rec_a) << "existing slots must remain addressable after reserve";
-    EXPECT_EQ(&pool[b], &rec_b) << "existing slots must remain addressable after reserve";
-    EXPECT_EQ(pool[a].id, 123u);
-    EXPECT_EQ(pool[b].id, 456u);
-    EXPECT_EQ(pool.size(), 2u);
-    EXPECT_EQ(pool.allocate(), 2u);
-}
-
-TEST(OrderPoolTest, ReserveSmallerThanCurrentIsNoOp) {
-    OrderPool pool;
-    std::uint32_t a = pool.allocate();
-    std::uint32_t b = pool.allocate();
-    pool[a].id = 123;
-    pool[b].id = 456;
-    OrderRecord& rec_a = pool[a];
-    OrderRecord& rec_b = pool[b];
-
-    pool.reserve(0);
-    pool.reserve(1);
-
-    EXPECT_EQ(&pool[a], &rec_a) << "existing slots must remain addressable after reserve";
-    EXPECT_EQ(&pool[b], &rec_b) << "existing slots must remain addressable after reserve";
-    EXPECT_EQ(pool[a].id, 123u);
-    EXPECT_EQ(pool[b].id, 456u);
-    EXPECT_EQ(pool.size(), 2u);
-    EXPECT_EQ(pool.allocate(), 2u);
-}
-
-TEST(OrderPoolTest, FailedReserveLeavesPoolUnchanged) {
-    OrderPool pool;
-    std::uint32_t a = pool.allocate();
-    std::uint32_t b = pool.allocate();
-    pool[a].id = 123;
-    pool[b].id = 456;
-    OrderRecord* rec_a = &pool[a];
-    OrderRecord* rec_b = &pool[b];
-
-    // With overcommit_memory = 0 (default) in Linux, this should throw std::bad_alloc.
-    // On machines with overcommit_memory=1, OOM killer may terminate the process instead of throwing.
-    EXPECT_THROW(pool.reserve(std::size_t{1} << 60), std::exception) << "should throw std::bad_alloc on 64-bit systems";
-
-    EXPECT_EQ(&pool[a], rec_a) << "existing slots must remain addressable after failed reserve";
-    EXPECT_EQ(&pool[b], rec_b) << "existing slots must remain addressable after failed reserve";
-    EXPECT_EQ(pool[a].id, 123u);
-    EXPECT_EQ(pool[b].id, 456u);
-    EXPECT_EQ(pool.size(), 2u);
+    EXPECT_EQ(&pool[first], first_rec) << "slots never move";
+    EXPECT_EQ(pool[first].id, 999u);
+    EXPECT_EQ(pool.size(), kCapacity);
+    EXPECT_EQ(pool[kCapacity - 1].id, kCapacity - 1);
+    EXPECT_EQ(pool.try_allocate(), kInvalidSlot);
 }

@@ -21,7 +21,7 @@ TEST(SessionScenario, FullSessionEventForEvent) {
 
     // Reference 80.00, +/-5% band -> [76.00, 84.00], tick 0.05.
     InstrumentConfig cfg{.instrument_id = 7, .reference_price = Px(80), .band_bps = 500};
-    ASSERT_EQ(engine->configure(&cfg, 1), ConfigureResult::kOk);
+    ASSERT_EQ(engine->configure(&cfg, 1, kTestMaxOrders), ConfigureResult::kOk);
 
     // 1: submit id=101, Sell Limit Day, 80.50, 200 -> accepted(101)
     engine->submit(MakeLimit(101, 7, Side::kSell, TimeInForce::kDay, Px(80, 5000), 200));

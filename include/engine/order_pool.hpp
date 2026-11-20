@@ -41,62 +41,59 @@ static_assert(sizeof(OrderRecord) == 48,
 static_assert(alignof(OrderRecord) == 8, "OrderRecord should need no more than 8-byte alignment");
 static_assert(std::is_nothrow_move_constructible_v<std::unique_ptr<OrderRecord[]>>,
               "std::unique_ptr<OrderRecord[]> must be nothrow move constructible");
-    
 
-// Chunked, append-only pool of OrderRecord. Growth allocates a whole new
-// chunk (never moves/copies existing elements), so slot indices and
-// references remain valid for the engine's lifetime and heap allocation
-// only happens once per kChunkSize new orders -- effectively never during
-// the timed hot path once the first chunk(s) are pre-reserved in
-// configure().
+// Every slot index is < capacity <= kMaxOrderCapacity, so a real slot can
+// never collide with the kInvalidSlot sentinel used by the FIFO links.
+static_assert(kMaxOrderCapacity < kInvalidSlot, "a real slot index must never equal kInvalidSlot");
+
+// Fixed-capacity, chunked, append-only pool of OrderRecord. All memory is
+// allocated by the constructor (called from configure()); try_allocate()
+// never allocates and reports exhaustion by returning kInvalidSlot. Chunks
+// never move, so slot indices and references stay valid for the engine's
+// lifetime.
 class OrderPool {
 public:
     static constexpr std::size_t kChunkSize = 1u << 20; // ~1,048,576 slots/chunk
 
-    OrderPool() { chunks_.reserve(64); }
+    OrderPool() noexcept = default; // capacity 0: every try_allocate() fails
 
-    void reserve(std::size_t n_slots) {
-        std::size_t needed_chunks = (n_slots + kChunkSize - 1) / kChunkSize;
-        if (chunks_.size() >= needed_chunks) return;
-
-        std::vector<std::unique_ptr<OrderRecord[]>> chunks;
-        chunks.reserve(needed_chunks - chunks_.size());
-        while (chunks.size() < needed_chunks - chunks_.size()) {
-            chunks.push_back(std::make_unique<OrderRecord[]>(kChunkSize));
+    // Allocates room for `capacity` slots up front; may throw bad_alloc.
+    // The last chunk holds only the remainder, so a small pool stays small.
+    explicit OrderPool(std::uint32_t capacity) {
+        std::size_t remaining = capacity;
+        chunks_.reserve((remaining + kChunkSize - 1) / kChunkSize);
+        while (remaining > 0) {
+            std::size_t n = remaining < kChunkSize ? remaining : kChunkSize;
+            chunks_.push_back(std::make_unique<OrderRecord[]>(n));
+            remaining -= n;
         }
-
-        chunks_.reserve(needed_chunks);
-        for (auto& chunk : chunks) {
-            chunks_.push_back(std::move(chunk));
-        }
+        capacity_ = capacity;
     }
 
-    std::uint32_t allocate() {
-        std::size_t chunk_idx = size_ / kChunkSize;
-        std::size_t offset = size_ % kChunkSize;
-        if (chunk_idx >= chunks_.size()) add_chunk();
-        std::uint32_t idx = static_cast<std::uint32_t>(size_);
-        ++size_;
-        chunks_[chunk_idx][offset] = OrderRecord{};
+    // Hands out the next slot, reset to a default OrderRecord, or
+    // kInvalidSlot once the pool is full. Never allocates.
+    std::uint32_t try_allocate() noexcept {
+        if (size_ >= capacity_) return kInvalidSlot;
+        std::uint32_t idx = size_++;
+        (*this)[idx] = OrderRecord{};
         return idx;
     }
 
-    OrderRecord& operator[](std::uint32_t idx) {
+    OrderRecord& operator[](std::uint32_t idx) noexcept {
         return chunks_[idx / kChunkSize][idx % kChunkSize];
     }
-    const OrderRecord& operator[](std::uint32_t idx) const {
+    const OrderRecord& operator[](std::uint32_t idx) const noexcept {
         return chunks_[idx / kChunkSize][idx % kChunkSize];
     }
 
-    std::size_t size() const { return size_; }
+    std::uint32_t size() const noexcept { return size_; }
+    std::uint32_t capacity() const noexcept { return capacity_; }
+    bool full() const noexcept { return size_ >= capacity_; }
 
 private:
-    void add_chunk() {
-        chunks_.push_back(std::make_unique<OrderRecord[]>(kChunkSize));
-    }
-
     std::vector<std::unique_ptr<OrderRecord[]>> chunks_;
-    std::size_t size_ = 0;
+    std::uint32_t size_ = 0;
+    std::uint32_t capacity_ = 0;
 };
 
 } // namespace xmatch::detail

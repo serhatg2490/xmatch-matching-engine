@@ -15,7 +15,7 @@ protected:
 
     void SetUp() override {
         InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
-        ASSERT_EQ(engine->configure(&cfg, 1), ConfigureResult::kOk);
+        ASSERT_EQ(engine->configure(&cfg, 1, kTestMaxOrders), ConfigureResult::kOk);
     }
 };
 
@@ -100,6 +100,31 @@ TEST_F(ValidationTest, ValidationOrderInstrumentBeforeDuplicateId) {
     ASSERT_EQ(listener.events.size(), 2u);
     EXPECT_EQ(listener.events[0], Rejected(1, RejectReason::kUnknownInstrument));
     EXPECT_EQ(listener.events[1], Accepted(1));
+}
+
+TEST(CapacityTest, CapacityExceededRejectsAndDoesNotConsumeId) {
+    RecordingListener listener;
+    EngineHandle engine(&listener);
+    InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
+    ASSERT_EQ(engine->configure(&cfg, 1, /*max_orders=*/2), ConfigureResult::kOk);
+
+    engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10));
+    engine->submit(MakeLimit(2, 1, Side::kBuy, TimeInForce::kDay, Px(25), 0)); // rejected, but its id is recorded
+    engine->submit(MakeLimit(3, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10)); // no slot left
+    engine->submit(MakeLimit(3, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10)); // id 3 was never recorded
+    engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10)); // duplicate is checked first
+    engine->submit(MakeLimit(4, 999, Side::kBuy, TimeInForce::kDay, Px(25), 10)); // unknown instrument first
+
+    ASSERT_EQ(listener.events.size(), 6u);
+    EXPECT_EQ(listener.events[0], Accepted(1));
+    EXPECT_EQ(listener.events[1], Rejected(2, RejectReason::kInvalidQuantity));
+    EXPECT_EQ(listener.events[2], Rejected(3, RejectReason::kCapacityExceeded));
+    EXPECT_EQ(listener.events[3], Rejected(3, RejectReason::kCapacityExceeded));
+    EXPECT_EQ(listener.events[4], Rejected(1, RejectReason::kDuplicateOrderId));
+    EXPECT_EQ(listener.events[5], Rejected(4, RejectReason::kUnknownInstrument));
+
+    // The book is untouched by the rejected submissions.
+    EXPECT_EQ(engine->top_of_book(1).bid_quantity, 10u);
 }
 
 } // namespace

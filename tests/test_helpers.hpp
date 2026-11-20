@@ -154,6 +154,10 @@ inline NewOrder MakeMarket(OrderId id, InstrumentId inst, Side side, TimeInForce
                      .tif = tif, .price = 0, .quantity = qty};
 }
 
+// max_orders for tests that don't exercise the capacity limit: far more than
+// any test submits, and small enough that each engine reserves only a few MB.
+inline constexpr std::uint32_t kTestMaxOrders = 1u << 16;
+
 // RAII wrapper around xmatch_create/destroy.
 class EngineHandle {
 public:

@@ -26,12 +26,12 @@ public:
         words_.assign((n_bits + 63) / 64, 0ULL);
     }
 
-    void set(std::uint32_t bit) { words_[bit >> 6] |= (1ULL << (bit & 63)); }
-    void clear(std::uint32_t bit) { words_[bit >> 6] &= ~(1ULL << (bit & 63)); }
-    bool test(std::uint32_t bit) const { return (words_[bit >> 6] >> (bit & 63)) & 1ULL; }
+    void set(std::uint32_t bit) noexcept { words_[bit >> 6] |= (1ULL << (bit & 63)); }
+    void clear(std::uint32_t bit) noexcept { words_[bit >> 6] &= ~(1ULL << (bit & 63)); }
+    bool test(std::uint32_t bit) const noexcept { return (words_[bit >> 6] >> (bit & 63)) & 1ULL; }
 
     // Highest set bit at index <= start; -1 if none.
-    std::int64_t find_highest_le(std::int64_t start) const {
+    std::int64_t find_highest_le(std::int64_t start) const noexcept {
         if (start < 0) return -1;
         std::int64_t word_idx = start >> 6;
         int bit_idx = static_cast<int>(start & 63);
@@ -46,7 +46,7 @@ public:
     }
 
     // Lowest set bit at index >= start; -1 if none.
-    std::int64_t find_lowest_ge(std::int64_t start) const {
+    std::int64_t find_lowest_ge(std::int64_t start) const noexcept {
         std::int64_t n_words = static_cast<std::int64_t>(words_.size());
         if (start < 0) start = 0;
         std::int64_t word_idx = start >> 6;

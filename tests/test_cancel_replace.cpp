@@ -15,7 +15,7 @@ protected:
 
     void SetUp() override {
         InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
-        ASSERT_EQ(engine->configure(&cfg, 1), ConfigureResult::kOk);
+        ASSERT_EQ(engine->configure(&cfg, 1, kTestMaxOrders), ConfigureResult::kOk);
     }
 };
 
@@ -191,6 +191,39 @@ TEST_F(CancelReplaceTest, ReplaceNewQuantityBelowAlreadyFilledIsClampedNotUnderf
     engine->replace(ReplaceOrder{.order_id = 1, .new_order_id = 10, .new_price = Px(25, 1000), .new_quantity = 10});
     ASSERT_EQ(listener.events.size(), 1u);
     EXPECT_EQ(listener.events[0], Canceled(1, 30, CancelReason::kUserRequested));
+}
+
+TEST(ReplaceCapacityTest, ReplaceAtCapacityKeepsOriginalOrder) {
+    RecordingListener listener;
+    EngineHandle engine(&listener);
+    InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
+    ASSERT_EQ(engine->configure(&cfg, 1, /*max_orders=*/2), ConfigureResult::kOk);
+
+    engine->submit(MakeLimit(1, 1, Side::kBuy, TimeInForce::kDay, Px(25), 10));
+    engine->replace(ReplaceOrder{.order_id = 1, .new_order_id = 2, .new_price = Px(25, 1000), .new_quantity = 20});
+    listener.events.clear();
+
+    // Both slots are used. Every replace that needs a new slot is refused...
+    engine->replace(ReplaceOrder{.order_id = 2, .new_order_id = 3, .new_price = Px(25, 2000), .new_quantity = 20});
+    engine->replace(ReplaceOrder{.order_id = 2, .new_order_id = 2, .new_price = Px(25, 1000), .new_quantity = 5});
+    // ...but tick validation still comes first.
+    engine->replace(ReplaceOrder{.order_id = 2, .new_order_id = 4, .new_price = Px(25, 1050), .new_quantity = 20});
+    ASSERT_EQ(listener.events.size(), 3u);
+    EXPECT_EQ(listener.events[0], Rejected(3, RejectReason::kCapacityExceeded));
+    EXPECT_EQ(listener.events[1], Rejected(2, RejectReason::kCapacityExceeded));
+    EXPECT_EQ(listener.events[2], Rejected(4, RejectReason::kInvalidPriceTick));
+
+    // The original order is still on the book exactly as it was.
+    TopOfBook tob = engine->top_of_book(1);
+    EXPECT_EQ(tob.bid_price, Px(25, 1000));
+    EXPECT_EQ(tob.bid_quantity, 20u);
+
+    // A replace down to zero is a plain cancel and needs no slot.
+    listener.events.clear();
+    engine->replace(ReplaceOrder{.order_id = 2, .new_order_id = 5, .new_price = Px(25, 1000), .new_quantity = 0});
+    ASSERT_EQ(listener.events.size(), 1u);
+    EXPECT_EQ(listener.events[0], Canceled(2, 20, CancelReason::kUserRequested));
+    EXPECT_EQ(engine->top_of_book(1).bid_quantity, 0u);
 }
 
 } // namespace

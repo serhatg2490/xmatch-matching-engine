@@ -1,7 +1,7 @@
 // ============================================================================
 //  xmatch — public API for the matching engine shared library
 //  File: xmatch/matching_engine_api.hpp
-//  API version: 3
+//  API version: 4
 //
 //  Copyright (c) 2025 Serhat Gul. Released under the MIT License; see LICENSE.
 //
@@ -58,10 +58,13 @@ using OrderId = std::uint64_t;  // assigned by the caller, unique per engine
 using TradeId = std::uint64_t;  // assigned by the engine, 1, 2, 3, ...
 using InstrumentId = std::uint32_t;
 
-inline constexpr std::uint32_t kApiVersion = 3;
+inline constexpr std::uint32_t kApiVersion = 4;
 inline constexpr Price kPriceScale = 10000; // price units per 1.00
 inline constexpr std::uint32_t kBpsPerUnit = 10000; // basis points in 1.0 (100%)
 inline constexpr std::uint32_t kMaxBandBps = kBpsPerUnit; // widest band configure() accepts (100%)
+// Largest max_orders configure() accepts (2^32 - 2). Slot 0xFFFFFFFF is the
+// engine's internal "no order" sentinel, so it can never be a real order.
+inline constexpr std::uint32_t kMaxOrderCapacity = 0xFFFFFFFEu;
 
 enum class Side : std::uint8_t {
     kBuy = 0,
@@ -90,6 +93,9 @@ enum class RejectReason : std::uint8_t {
     kInvalidTimeInForce = 5, // e.g. a market order with tif == kDay
     kUnknownOrder = 6,       // no open order with the given id
     kNotConfigured = 7,      // Always checked first despite being last in the list
+    kCapacityExceeded = 8,   // the engine already holds max_orders order ids (see configure());
+                             // checked right after kDuplicateOrderId, before the id is recorded,
+                             // so the order_id is NOT consumed
 };
 
 // Why an order, or what was left of it, left the book.
@@ -108,7 +114,8 @@ enum class ConfigureResult : std::uint8_t {
                              // 3) reference price not tick-aligned or > INT64_MAX / kMaxBandBps
                              // 4) band_bps > kMaxBandBps
                              // 5) count == 0 or count > UINT32_MAX
-    kOutOfMemory = 3,        // the engine could not allocate enough memory for the requested instruments
+                             // 6) max_orders == 0 or max_orders > kMaxOrderCapacity
+    kOutOfMemory = 3,       // the engine could not allocate enough memory for the requested instruments
     kInternalError = 4,      // an unexpected exception was thrown during configuration; the engine is left unconfigured
 };
 
@@ -157,6 +164,9 @@ struct CancelOrder {
 //     it fails, the original order stays on the book exactly as it was.
 //   * A new price that crosses the book matches right away, after the
 //     on_replaced event has been delivered.
+//   * If the engine already holds max_orders order ids, the replace is
+//     rejected with kCapacityExceeded (after the tick and band checks) and
+//     the original order stays on the book exactly as it was.
 struct ReplaceOrder {
     OrderId order_id;      // the open order to modify
     OrderId new_order_id;  // the id it will carry afterwards
@@ -235,21 +245,28 @@ public:
         // 3) reference price not tick-aligned or > INT64_MAX / kMaxBandBps
         // 4) band_bps > kMaxBandBps
         // 5) count == 0 or count > UINT32_MAX
+        // 6) max_orders == 0 or max_orders > kMaxOrderCapacity
+    // max_orders is a hard cap on the order ids the engine will ever record:
+    // every submit() that gets past the duplicate-id check and every replace()
+    // that installs a new order uses one. Memory for all of them is reserved
+    // here, so submit()/cancel()/replace() never allocate; once the cap is
+    // reached they reject with RejectReason::kCapacityExceeded.
     // Unconfigured engine rejects all order submissions with RejectReason::kNotConfigured.
     [[nodiscard]] virtual ConfigureResult configure(const InstrumentConfig* instruments,
-                           std::size_t count) = 0;
+                           std::size_t count,
+                           std::uint32_t max_orders) noexcept = 0;
 
     // Continuous-session order entry, matched on price then time: the better
     // price trades first, and among equal prices the order that arrived
     // earlier trades first.
-    virtual void submit(const NewOrder& order) = 0;
+    virtual void submit(const NewOrder& order) noexcept = 0;
 
-    virtual void cancel(const CancelOrder& request) = 0;
+    virtual void cancel(const CancelOrder& request) noexcept = 0;
 
-    virtual void replace(const ReplaceOrder& request) = 0;
+    virtual void replace(const ReplaceOrder& request) noexcept = 0;
 
     // Best bid and best ask with their aggregate sizes. Runs in O(1).
-    virtual TopOfBook top_of_book(InstrumentId instrument_id) const = 0;
+    virtual TopOfBook top_of_book(InstrumentId instrument_id) const noexcept = 0;
 };
 
 } // namespace xmatch

@@ -46,22 +46,30 @@ consumption during matching are all O(1), with no per-order node allocation.
 **Order pool: chunked, append-only, never recycled.** `order_id` is unique
 for the engine's lifetime (part of the API contract), so a
 slot is never reused for a different id — this sidesteps ABA-style bugs and
-makes "is this id known" a single lookup. Growth allocates a whole new
-~1M-entry chunk (`OrderPool`, `include/engine/order_pool.hpp`); existing
-chunks never move, so slot indices and in-flight references stay valid
-across growth. `configure()` pre-reserves 2²⁴ (~16.7M) slots in one shot, so
-across a ~10M-op benchmark run the pool never grows during the timed loop
-at all — the one-time cost lands in `configure()`, which isn't measured.
+makes "is this id known" a single lookup. The pool has a fixed capacity,
+`max_orders`, passed to `configure()`, which allocates every ~1M-entry chunk
+(`OrderPool`, `include/engine/order_pool.hpp`) in one shot; the last chunk
+holds only the remainder, so a small capacity stays small. Chunks never
+move, so slot indices and in-flight references stay valid for the engine's
+lifetime. `try_allocate()` never allocates: when the pool is full it returns
+`kInvalidSlot` and the engine rejects with `kCapacityExceeded`. The
+benchmark passes `warmup_ops + num_ops` (~10.5M), since each op records at
+most one id, so the one-time cost lands in `configure()`, which isn't
+measured.
 
 **Id lookup: custom open-addressing hash map, insert/find only.**
 `FlatHashMap` (`include/engine/flat_hash_map.hpp`) never erases — ids are
 permanent, so there's no tombstone/backward-shift-deletion complexity to
 pay for. Linear probing, `splitmix64`-mixed keys (client ids are often
 small sequential integers, which would otherwise cluster), load factor
-capped at 0.7, pre-reserved alongside the pool. The table is grow-only:
-`rehash` never goes below the capacity its entries need, allocates the new
-array before touching any member, and re-places entries without a load
-check, so a failed growth leaves the map intact. `std::unordered_map` was
+capped at 0.7, reserved in `configure()` for `max_orders` entries. Since
+every recorded id takes a pool slot, the index can never reach its load
+limit, and the hot path inserts with `insert_no_grow()`, which never
+rehashes. The growing `insert()` remains for `configure()`-time use (the
+instrument index). The table is grow-only: `rehash` never goes below the
+capacity its entries need, allocates the new array before touching any
+member, and re-places entries without a load check, so a failed growth
+leaves the map intact. `std::unordered_map` was
 rejected here specifically because of its node-per-entry allocation on
 every `submit()` — one array-backed table amortizes to O(1) with no hot-path
 `malloc`.
@@ -81,17 +89,23 @@ inconvenience, so the type system rules it out.
 - No heap allocation, syscalls, or exceptions inside `submit`/`cancel`/
   `replace`'s success paths. `configure()` does the only large allocations
   (pool + id-index reserve, one per instrument's level/bitmap arrays).
-- Every public `IMatchingEngine` method is wrapped in `try { ... } catch
-  (...) {}` — no exception may cross the C ABI boundary, since the host may
-  well be built with a different toolchain. This is the one blanket
-  exception-catching in the codebase, and it's a correctness requirement,
-  not a style choice. `configure()` is the one method that reports what it
-  caught: `std::bad_alloc` becomes `ConfigureResult::kOutOfMemory`, anything
-  else `kInternalError`.
+- No exception may cross the C ABI boundary, since the host may well be
+  built with a different toolchain. `submit`/`cancel`/`replace`/`top_of_book`
+  are `noexcept` (API v4) *by construction*: nothing they call can throw,
+  and every building block they rely on is `static_assert`ed `noexcept` in
+  `src/engine.cpp`. They carry no `try/catch`. Before v4 they swallowed
+  exceptions with `catch (...) {}`, which meant a growth-path `bad_alloc`
+  produced no event at all and could leave an id half-registered; worse, a
+  future throw between two book mutations would have been silently swallowed
+  into a half-applied book. Now such a bug hits `std::terminate`: fail-stop
+  beats a corrupted book. `configure()` and `xmatch_create()` are the only
+  places that catch. `configure()` reports what it caught: `std::bad_alloc`
+  becomes `ConfigureResult::kOutOfMemory`, anything else `kInternalError`.
 - `IEventListener` callbacks are `noexcept` (API v3): a throwing listener
-  hits `std::terminate` and never reaches the engine's `catch (...)`.
+  hits `std::terminate`.
 - `configure()` validates every input before it builds anything (non-null
-  pointer, `0 < count <= UINT32_MAX`, tick-aligned reference price no larger
+  pointer, `0 < count <= UINT32_MAX`, `0 < max_orders <= kMaxOrderCapacity`,
+  tick-aligned reference price no larger
   than `INT64_MAX / kMaxBandBps`, `band_bps <= kMaxBandBps`, unique
   instrument ids) and returns `kInvalidArgument` otherwise. The reference
   price bound keeps `ref · band_bps` and the band's upper edge inside
@@ -99,6 +113,9 @@ inconvenience, so the type system rules it out.
   least one level, even with `band_bps = 0`. The band divisor is
   `kBpsPerUnit`, not `kPriceScale`: both are 10000, but one converts basis
   points to a ratio and the other fixes the price's decimal places.
+  `kMaxOrderCapacity` is 2³² − 2, so every slot index stays below
+  `kInvalidSlot` (2³² − 1), the "no order" sentinel in the FIFO links, and
+  the 32-bit slot counter can never wrap.
 - The unconfigured-engine guard in `submit`/`cancel`/`replace` is one
   well-predicted branch on `configured_`; side-by-side runs against the
   previous build showed no measurable latency change.
@@ -121,6 +138,12 @@ inconvenience, so the type system rules it out.
   to be tracked and checked everywhere) for a saving that doesn't matter
   given ids are permanent and pre-reserved capacity already covers the
   benchmark's scale.
+- **Growing the pool and id index on demand.** The pre-v4 engine did this
+  past its reserve: a 48 MB chunk allocation or a full ~1 GB rehash inside
+  a `submit()`, i.e. a latency spike and a possible `bad_alloc` on the hot
+  path. A hard cap with an explicit `kCapacityExceeded` reject keeps the
+  "no hot-path allocation" rule unconditional and makes exhaustion visible
+  to the caller.
 - **Google Benchmark for `bench/`.** Used a small custom `chrono`-based
   driver instead, so the repo has zero network/build dependencies beyond
   GoogleTest for the test suite; it also let the workload generator produce
@@ -148,6 +171,14 @@ readings this engine commits to, and the tests pin each of them down.
   so a same-id replace that fails validation leaves the still-open original
   order reachable under its own id, exactly as "stays on the book,
   untouched" requires.
+- `kCapacityExceeded` (value 8, appended like `kNotConfigured`) is the
+  other exception to enum-order validation. `submit()` checks it right after
+  the duplicate-id check: the id cannot be recorded, so it is *not*
+  consumed, and resubmitting it yields `kCapacityExceeded` again rather than
+  `kDuplicateOrderId`. `replace()` checks it after tick/band, as the last
+  step before any state changes, so the original order stays as it was. A
+  same-id replace needs a fresh slot too; a replace down to zero is a plain
+  cancel and needs none.
 - `replace()`'s "quantity increase" (which loses priority) is judged
   against the order's *current open quantity*, not its original submitted
   quantity — this is the reading under which a partially filled order being

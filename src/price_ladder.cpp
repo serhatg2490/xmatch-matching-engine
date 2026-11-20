@@ -37,7 +37,7 @@ void PriceLadder::build(Price band_lo, Price band_hi) {
     band_hi_ = band_hi;
 }
 
-std::int64_t PriceLadder::price_to_index(Price price) const {
+std::int64_t PriceLadder::price_to_index(Price price) const noexcept {
     if (price < band_lo_ || price > band_hi_) return -1;
     for (const Segment& seg : segments_) {
         if (price >= seg.start_price && price <= seg.end_price) {
@@ -49,7 +49,7 @@ std::int64_t PriceLadder::price_to_index(Price price) const {
     return -1;
 }
 
-Price PriceLadder::index_to_price(std::uint32_t index) const {
+Price PriceLadder::index_to_price(std::uint32_t index) const noexcept {
     for (const Segment& seg : segments_) {
         if (index >= seg.index_offset && index < seg.index_offset + seg.count) {
             return seg.start_price + static_cast<Price>(index - seg.index_offset) * seg.tick;

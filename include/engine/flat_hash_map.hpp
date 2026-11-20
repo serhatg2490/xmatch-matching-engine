@@ -14,9 +14,10 @@ namespace xmatch::detail {
 //  - Insert/find only; entries are never erased. The engine never needs to
 //    forget an order_id (ids are unique for the lifetime of the instance),
 //    so we don't pay for tombstone handling or backward-shift deletion.
-//  - reserve() up front sizes the backing array so the benchmark's ~10M
-//    operations don't trigger a rehash on the hot path; growth still works
-//    (doubling + full rehash) if the caller undershoots the reserve.
+//  - reserve() up front sizes the backing array. The engine reserves for its
+//    whole order capacity in configure() and inserts on the hot path with
+//    insert_no_grow(), which never rehashes. insert() still grows (doubling
+//    + full rehash) for configure()-time and test use.
 //  - Grow-only: since size_ never decreases there is nothing to gain from
 //    shrinking, and rehash() never goes below capacity_for(size_). That
 //    floor is what lets the re-placement loop run without a nested rehash.
@@ -36,7 +37,7 @@ public:
     }
 
     // Returns pointer to slot value if key present, else nullptr.
-    std::uint32_t* find(std::uint64_t key) {
+    std::uint32_t* find(std::uint64_t key) noexcept {
         std::size_t idx = mix(key) & mask_;
         for (;;) {
             Slot& s = slots_[idx];
@@ -46,31 +47,44 @@ public:
         }
     }
 
-    const std::uint32_t* find(std::uint64_t key) const {
+    const std::uint32_t* find(std::uint64_t key) const noexcept {
         return const_cast<FlatHashMap*>(this)->find(key);
     }
 
-    bool contains(std::uint64_t key) const { return find(key) != nullptr; }
+    bool contains(std::uint64_t key) const noexcept { return find(key) != nullptr; }
 
     // Updates the value for a key that is already present. Used by
     // replace() when new_order_id == order_id (in-place id reuse); the
     // find+assign happens in one call so no rehash can occur in between.
-    void assign_existing(std::uint64_t key, std::uint32_t value) {
+    void assign_existing(std::uint64_t key, std::uint32_t value) noexcept {
         std::uint32_t* v = find(key);
         assert(v && "assign_existing called on absent key");
         *v = value;
     }
 
-    // Inserts key->value. Caller must ensure key is not already present
-    // (the engine always checks contains() first for duplicate-id logic).
+    // Inserts key->value, doubling the table first if it is at the load
+    // limit (may throw bad_alloc). configure()-time and tests only; the hot
+    // path uses insert_no_grow(). Caller must ensure key is not already
+    // present (the engine always checks contains() first).
     void insert(std::uint64_t key, std::uint32_t value) {
-        if (size_ + 1 > static_cast<std::size_t>(static_cast<double>(capacity_) * kMaxLoadFactor)) {
-            rehash(capacity_ << 1);
-        }
+        if (!has_room_for(1)) rehash(capacity_ << 1);
         place(key, value);
     }
 
-    std::size_t size() const { return size_; }
+    // Hot-path insert: never rehashes, never allocates. Caller guarantees
+    // room (has_room_for(1)); the engine does so by reserving the table for
+    // the pool's whole capacity. Same no-duplicate precondition as insert().
+    void insert_no_grow(std::uint64_t key, std::uint32_t value) noexcept {
+        assert(has_room_for(1) && "insert_no_grow on a FlatHashMap at its load limit");
+        place(key, value);
+    }
+
+    // True if n more entries fit without exceeding kMaxLoadFactor.
+    bool has_room_for(std::size_t n) const noexcept {
+        return size_ + n <= static_cast<std::size_t>(static_cast<double>(capacity_) * kMaxLoadFactor);
+    }
+
+    std::size_t size() const noexcept { return size_; }
 
 private:
     struct Slot {
@@ -91,7 +105,7 @@ private:
         return std::bit_ceil(needed);
     }
 
-    static std::uint64_t mix(std::uint64_t x) {
+    static std::uint64_t mix(std::uint64_t x) noexcept {
         // splitmix64 finalizer
         x ^= x >> 30;
         x *= 0xbf58476d1ce4e5b9ULL;
@@ -125,7 +139,7 @@ private:
 
     // Probes for the first free slot and stores key->value. No load-factor
     // check; callers guarantee there is room.
-    void place(std::uint64_t key, std::uint32_t value) {
+    void place(std::uint64_t key, std::uint32_t value) noexcept {
         std::size_t idx = mix(key) & mask_;
         for (;;) {
             Slot& s = slots_[idx];

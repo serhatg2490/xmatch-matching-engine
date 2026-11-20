@@ -34,24 +34,24 @@ class OrderBook {
 public:
     void configure(InstrumentId instrument_id, Price reference_price, std::uint32_t band_bps);
 
-    InstrumentId instrument_id() const { return instrument_id_; }
-    Price band_lo() const { return ladder_.band_lo(); }
-    Price band_hi() const { return ladder_.band_hi(); }
+    InstrumentId instrument_id() const noexcept { return instrument_id_; }
+    Price band_lo() const noexcept { return ladder_.band_lo(); }
+    Price band_hi() const noexcept { return ladder_.band_hi(); }
 
     // -1 if price is not a valid resting price for this instrument (outside
     // the band, or not tick-aligned).
-    std::int64_t price_to_index(Price price) const { return ladder_.price_to_index(price); }
-    Price index_to_price(std::uint32_t index) const { return ladder_.index_to_price(index); }
+    std::int64_t price_to_index(Price price) const noexcept { return ladder_.price_to_index(price); }
+    Price index_to_price(std::uint32_t index) const noexcept { return ladder_.index_to_price(index); }
 
-    TopOfBook top_of_book() const;
+    TopOfBook top_of_book() const noexcept;
 
-    bool has_best(Side side) const {
+    bool has_best(Side side) const noexcept {
         return (side == Side::kBuy) ? best_bid_idx_ >= 0 : best_ask_idx_ >= 0;
     }
-    std::int64_t best_index(Side side) const {
+    std::int64_t best_index(Side side) const noexcept {
         return (side == Side::kBuy) ? best_bid_idx_ : best_ask_idx_;
     }
-    Price best_price(Side side) const {
+    Price best_price(Side side) const noexcept {
         return ladder_.index_to_price(static_cast<std::uint32_t>(best_index(side)));
     }
 
@@ -59,27 +59,27 @@ public:
     // strictly past `after` (exclusive), or -1 if none remain. Used by the
     // FOK feasibility pre-check, which needs to sum liquidity across
     // several levels without mutating book state.
-    std::int64_t next_index(Side side, std::int64_t after) const {
+    std::int64_t next_index(Side side, std::int64_t after) const noexcept {
         return (side == Side::kBuy) ? bid_bitmap_.find_highest_le(after - 1)
                                      : ask_bitmap_.find_lowest_ge(after + 1);
     }
 
-    Level& level_at(Side side, std::uint32_t idx) {
+    Level& level_at(Side side, std::uint32_t idx) noexcept {
         return (side == Side::kBuy) ? bid_levels_[idx] : ask_levels_[idx];
     }
-    const Level& level_at(Side side, std::uint32_t idx) const {
+    const Level& level_at(Side side, std::uint32_t idx) const noexcept {
         return (side == Side::kBuy) ? bid_levels_[idx] : ask_levels_[idx];
     }
 
     // Appends `slot` to the tail of the level for (side, price). Caller must
     // have already set pool[slot].open_qty to the resting quantity.
-    void add_resting(OrderPool& pool, std::uint32_t slot, Side side, Price price);
+    void add_resting(OrderPool& pool, std::uint32_t slot, Side side, Price price) noexcept;
 
     // Unlinks `slot` from its current level (pool[slot].side/level_index
     // must still be valid). Safe to call with open_qty already at 0 (e.g.
     // right after a full fill) or with the live remaining quantity (cancel,
     // replace-away).
-    void remove_resting(OrderPool& pool, std::uint32_t slot);
+    void remove_resting(OrderPool& pool, std::uint32_t slot) noexcept;
 
     // Swaps `new_slot` into the exact FIFO position currently held by
     // `old_slot` on the same side/level -- used by replace() when time
@@ -89,7 +89,7 @@ public:
     // level's aggregate quantity is adjusted by the qty delta; order_count,
     // the bitmap, and the best-index cache are untouched (the level stays
     // non-empty throughout).
-    void replace_in_place(OrderPool& pool, std::uint32_t old_slot, std::uint32_t new_slot);
+    void replace_in_place(OrderPool& pool, std::uint32_t old_slot, std::uint32_t new_slot) noexcept;
 
 private:
     InstrumentId instrument_id_ = 0;

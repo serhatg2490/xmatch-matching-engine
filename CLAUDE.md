@@ -45,9 +45,10 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_BUILD_TESTS=OFF -DENGINE_BUIL
 Binaries get a build-tree RUNPATH, so `./build/engine_api_tests` resolves the `.so` with no
 `LD_LIBRARY_PATH`.
 
-`configure()` pre-reserves 2^24 order slots plus the id index, so *any* process that
-creates an engine — including each test binary run — sits at ~1.4 GB RSS. That is by
-design (no hot-path allocation), not a leak.
+`configure(instruments, count, max_orders)` reserves `max_orders` pool slots plus the id
+index up front (48 B pool + 23–46 B index per order, depending on power-of-two rounding). The bench passes `warmup_ops + num_ops` (10.5M by default, ~900 MB RSS);
+tests pass `kTestMaxOrders` (2^16, a few MB). That is by design (no hot-path allocation),
+not a leak.
 
 ## Architecture
 
@@ -70,7 +71,7 @@ Layering, outermost first:
   for the 4-bracket tick ladder, plus `constexpr` free functions over it;
   `src/tick_table.cpp` holds only compile-time `static_assert`s on the table,
   and `PriceLadder` segments bands by walking that same table),
-  `OrderPool` (chunked append-only `OrderRecord` store, intrusive FIFO links),
+  `OrderPool` (fixed-capacity chunked append-only `OrderRecord` store, intrusive FIFO links),
   `LevelBitset` (word-skipping occupancy bitmap), `FlatHashMap` (open-addressing,
   insert/find only).
 
@@ -86,16 +87,23 @@ These are contract, not style. Changing any of them means changing the API heade
 prose and the tests together.
 
 - **No heap allocation, syscall, lock, logging or exception on `submit`/`cancel`/`replace`
-  success paths.** All large allocation belongs in `configure()`.
-- **No exception crosses the C ABI.** Every public `Engine` method body is wrapped in
-  `try { ... } catch (...) {}`. This is the one place blanket catching is correct.
+  success paths.** All allocation belongs in `configure()`.
+- **Fixed order capacity (API v4).** The pool and id index never grow after `configure()`:
+  `OrderPool::try_allocate()` returns `kInvalidSlot` when full and the engine rejects with
+  `kCapacityExceeded`; the hot path inserts with `FlatHashMap::insert_no_grow()`.
+  `kMaxOrderCapacity` (2^32-2) `< kInvalidSlot` keeps every real slot index off the sentinel.
+- **No exception crosses the C ABI.** `submit`/`cancel`/`replace`/`top_of_book` are
+  `noexcept` with no `try/catch` — nothing they call throws, and the building blocks are
+  `static_assert(noexcept(...))`ed in `src/engine.cpp`. Keep it that way: a throwing call
+  there terminates rather than being swallowed. Only `configure()` and `xmatch_create()`
+  catch exceptions.
 - **Listener callbacks are `noexcept` (API v3).** A throwing listener calls `std::terminate`.
 - **`configure()` gives the strong exception guarantee.** It builds books, indexes and pool
   into locals and commits them with nothrow moves (`static_assert`ed for `OrderPool` and
   `FlatHashMap`), setting `configured_` last. A failed call leaves the engine unconfigured
   and may be retried; only the first *successful* call takes effect.
 - **`configure()` reports its outcome** as a `[[nodiscard]] ConfigureResult` (API v2).
-  All input validation (pointer, count, reference price, `band_bps`, duplicate ids) runs
+  All input validation (pointer, count, `max_orders`, reference price, `band_bps`, duplicate ids) runs
   before any book is built and returns `kInvalidArgument`; `bad_alloc` maps to
   `kOutOfMemory`, any other exception to `kInternalError`.
 - **Integer price arithmetic only** — `Price` is `int64_t` at 1/10000 units. No `float`
@@ -106,7 +114,8 @@ prose and the tests together.
   rather than renaming the old record.
 - **Validation order is fixed** and mirrors the `RejectReason` enum order, except
   `kNotConfigured` (value 7, appended for ABI stability), which is always checked first
-  and consumes no id. An `order_id`
+  and consumes no id, and `kCapacityExceeded` (value 8), checked right after the
+  duplicate-id step (after tick/band in `replace()`), which also consumes no id. An `order_id`
   is consumed at the uniqueness step — it stays spent even if a later step rejects the
   submission.
 - **`replace()` re-validates tick/band before registering `new_order_id` or allocating**,

@@ -15,7 +15,7 @@ protected:
 
     void SetUp() override {
         InstrumentConfig cfg{.instrument_id = 1, .reference_price = Px(25), .band_bps = 1000};
-        ASSERT_EQ(engine->configure(&cfg, 1), ConfigureResult::kOk);
+        ASSERT_EQ(engine->configure(&cfg, 1, kTestMaxOrders), ConfigureResult::kOk);
     }
 };
 

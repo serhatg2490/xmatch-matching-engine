@@ -7,7 +7,7 @@ with a small C ABI so a host program can link it or `dlopen()` it.
 The design goal was a sub-microsecond median `submit`/`cancel`/`replace`, with
 no heap allocation, syscalls, logging, or exceptions on the hot path. On a
 laptop-class x86-64 core it measures a ~233 ns median and a p99.9 under 1 µs at
-~2.5M ops/sec single-threaded — see [`BENCHMARK.md`](BENCHMARK.md) for the full
+~2.6M ops/sec single-threaded — see [`BENCHMARK.md`](BENCHMARK.md) for the full
 numbers, the method, and an honest account of what this environment can and
 cannot measure.
 
@@ -29,6 +29,9 @@ purpose-built open-addressing id index.
 - Validated, retryable configuration: `configure()` returns a
   `ConfigureResult`, rejects bad instrument setups up front, and an engine
   that has not been configured rejects every order with `kNotConfigured`.
+- Fixed order capacity: `configure()` takes `max_orders` and reserves memory
+  for all of them up front, so order entry never allocates; once the cap is
+  reached, new orders and replaces are rejected with `kCapacityExceeded`.
 - Fixed-point prices throughout; no floating-point price arithmetic anywhere.
 - Deterministic: the same configuration and operation sequence always
   produces the same event stream.
@@ -70,7 +73,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_BUILD_TESTS=OFF -DENGINE_BUIL
 ## Usage
 
 The public API is [`include/xmatch/matching_engine_api.hpp`](include/xmatch/matching_engine_api.hpp).
-The public API began as the interface of a take-home exercise and has since been reworked (v3).
+The public API began as the interface of a take-home exercise and has since been reworked (v4).
 Implement `IEventListener`, create an engine, declare your instruments once,
 check that configuration succeeded, then submit:
 
@@ -94,7 +97,7 @@ IMatchingEngine* engine = xmatch_create(&listener);
 InstrumentConfig cfg{.instrument_id = 1,
                      .reference_price = 250000, // 25.0000
                      .band_bps = 1000};         // +/- 10%
-if (engine->configure(&cfg, 1) != ConfigureResult::kOk) {
+if (engine->configure(&cfg, 1, /*max_orders=*/1'000'000) != ConfigureResult::kOk) {
     // nothing was applied; fix the configuration and call configure() again
 }
 

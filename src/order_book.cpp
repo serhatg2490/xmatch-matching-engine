@@ -44,7 +44,7 @@ void OrderBook::configure(InstrumentId instrument_id, Price reference_price, std
     best_ask_idx_ = -1;
 }
 
-TopOfBook OrderBook::top_of_book() const {
+TopOfBook OrderBook::top_of_book() const noexcept {
     TopOfBook tob{};
     if (best_bid_idx_ >= 0) {
         const Level& lvl = bid_levels_[static_cast<std::uint32_t>(best_bid_idx_)];
@@ -59,7 +59,7 @@ TopOfBook OrderBook::top_of_book() const {
     return tob;
 }
 
-void OrderBook::add_resting(OrderPool& pool, std::uint32_t slot, Side side, Price price) {
+void OrderBook::add_resting(OrderPool& pool, std::uint32_t slot, Side side, Price price) noexcept {
     std::int64_t signed_idx = ladder_.price_to_index(price);
     std::uint32_t idx = static_cast<std::uint32_t>(signed_idx);
 
@@ -91,7 +91,7 @@ void OrderBook::add_resting(OrderPool& pool, std::uint32_t slot, Side side, Pric
     }
 }
 
-void OrderBook::remove_resting(OrderPool& pool, std::uint32_t slot) {
+void OrderBook::remove_resting(OrderPool& pool, std::uint32_t slot) noexcept {
     OrderRecord& rec = pool[slot];
     Side side = rec.side;
     std::uint32_t idx = rec.level_index;
@@ -117,7 +117,7 @@ void OrderBook::remove_resting(OrderPool& pool, std::uint32_t slot) {
     }
 }
 
-void OrderBook::replace_in_place(OrderPool& pool, std::uint32_t old_slot, std::uint32_t new_slot) {
+void OrderBook::replace_in_place(OrderPool& pool, std::uint32_t old_slot, std::uint32_t new_slot) noexcept {
     OrderRecord& old_rec = pool[old_slot];
     OrderRecord& new_rec = pool[new_slot];
     Side side = old_rec.side;

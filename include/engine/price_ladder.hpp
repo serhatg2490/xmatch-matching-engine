@@ -23,14 +23,14 @@ public:
     void build(Price band_lo, Price band_hi);
 
     // -1 if price is outside the band or not tick-aligned within it.
-    std::int64_t price_to_index(Price price) const;
+    std::int64_t price_to_index(Price price) const noexcept;
 
-    Price index_to_price(std::uint32_t index) const;
+    Price index_to_price(std::uint32_t index) const noexcept;
 
-    std::uint32_t size() const { return total_count_; }
+    std::uint32_t size() const noexcept { return total_count_; }
 
-    Price band_lo() const { return band_lo_; }
-    Price band_hi() const { return band_hi_; }
+    Price band_lo() const noexcept { return band_lo_; }
+    Price band_hi() const noexcept { return band_hi_; }
 
 private:
     struct Segment {

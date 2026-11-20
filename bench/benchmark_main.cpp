@@ -104,7 +104,16 @@ int main(int argc, char** argv) {
         configs.push_back(InstrumentConfig{static_cast<InstrumentId>(i + 1), ref, 1000u});
     }
     
-    if (engine->configure(configs.data(), configs.size()) != ConfigureResult::kOk) {
+    // Every op records at most one order id, so warmup + timed ops is enough
+    // capacity for the whole run: the engine never rejects with
+    // kCapacityExceeded here, and nothing beyond that is reserved.
+    const std::uint64_t max_orders = args.warmup_ops + args.num_ops;
+    if (max_orders == 0 || max_orders > kMaxOrderCapacity) {
+        std::fprintf(stderr, "warmup_ops + num_ops must be in [1, %u]\n", kMaxOrderCapacity);
+        return 1;
+    }
+    if (engine->configure(configs.data(), configs.size(),
+                          static_cast<std::uint32_t>(max_orders)) != ConfigureResult::kOk) {
         std::fprintf(stderr, "Engine configuration failed\n");
         return 1;
     }
